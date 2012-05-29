@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		CE02793E1574581500120209 /* main.c in Sources */ = {isa = PBXBuildFile; fileRef = CE02793D1574581500120209 /* main.c */; };
 		CE0279401574581500120209 /* iMXUSBTool.1 in CopyFiles */ = {isa = PBXBuildFile; fileRef = CE02793F1574581500120209 /* iMXUSBTool.1 */; };
+		CE02794815745C8C00120209 /* imxusb.c in Sources */ = {isa = PBXBuildFile; fileRef = CE02794715745C8C00120209 /* imxusb.c */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -28,6 +29,8 @@
 		CE0279391574581500120209 /* iMXUSBTool */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = iMXUSBTool; sourceTree = BUILT_PRODUCTS_DIR; };
 		CE02793D1574581500120209 /* main.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = main.c; sourceTree = "<group>"; };
 		CE02793F1574581500120209 /* iMXUSBTool.1 */ = {isa = PBXFileReference; lastKnownFileType = text.man; path = iMXUSBTool.1; sourceTree = "<group>"; };
+		CE0279461574583100120209 /* imxusb.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = imxusb.h; sourceTree = "<group>"; };
+		CE02794715745C8C00120209 /* imxusb.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = imxusb.c; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -60,6 +63,8 @@
 		CE02793C1574581500120209 /* iMXUSBTool */ = {
 			isa = PBXGroup;
 			children = (
+				CE0279461574583100120209 /* imxusb.h */,
+				CE02794715745C8C00120209 /* imxusb.c */,
 				CE02793D1574581500120209 /* main.c */,
 				CE02793F1574581500120209 /* iMXUSBTool.1 */,
 			);
@@ -117,6 +122,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				CE02793E1574581500120209 /* main.c in Sources */,
+				CE02794815745C8C00120209 /* imxusb.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
