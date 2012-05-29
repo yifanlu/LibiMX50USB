@@ -7,12 +7,18 @@
 //
 
 #include <stdio.h>
+#include "hidapi.h"
+#include "imxusb.h"
 
 int main(int argc, const char * argv[])
 {
-
-    // insert code here...
-    printf("Hello, World!\n");
+    printf("%s\n", "Waiting for device...");
+    hid_device *handle = imx50_get_device();
+    printf("%s\n", "Found device.");
+    
+    
+    
+    
     return 0;
 }
 
