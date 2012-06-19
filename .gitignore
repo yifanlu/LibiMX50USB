@@ -1,0 +1,6 @@
+.DS_Store
+iMXUSBTool/hid.c
+iMXUSBTool/hidapi.h
+*.so
+*.o
+

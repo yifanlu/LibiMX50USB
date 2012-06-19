@@ -1,25 +1,38 @@
 //
-//  imxusb.c
-//  iMXUSBTool
+//  iMX50 USB Tool Library
 //
-//  Created by Yifan Lu on 5/28/12.
-//  Copyright (c) 2012 __MyCompanyName__. All rights reserved.
+//  Created by Yifan Lu
+//  This program is free software: you can redistribute it and/or modify
+//  it under the terms of the GNU General Public License as published by
+//  the Free Software Foundation, either version 3 of the License, or
+//  (at your option) any later version.
+//  
+//  This program is distributed in the hope that it will be useful,
+//  but WITHOUT ANY WARRANTY; without even the implied warranty of
+//  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//  GNU General Public License for more details.
+//  
+//  You should have received a copy of the GNU General Public License
+//  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
 
+#include "hidapi.h"
+#include "imxusb.h"
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "imxusb.h"
 #include <unistd.h>
 
 /**
     @brief Get a iMX50 usb download device
     
     This function will block until a device is found.
+    Remember to free the device with imx50_free_device()
  
     @return A device will be returned on success, NULL on error
 */
-hid_device *imx50_get_device() {
+imx50_device_t *imx50_init_device() {
     hid_device *handle = NULL;
     struct hid_device_info *dev;
     
@@ -33,7 +46,16 @@ hid_device *imx50_get_device() {
         hid_free_enumeration(dev);
     }
     
-    return handle;
+    return (imx50_device_t*)handle;
+}
+
+/**
+    @brief Frees a iMX50 usb download device
+ 
+    @param device The device to free.
+ */
+void imx50_close_device(imx50_device_t *device) {
+    hid_close((hid_device*)device);
 }
 
 /**
@@ -91,7 +113,7 @@ unsigned char *imx50_pack_command(sdp_t *command) {
  
     @return Zero on success, error code otherwise.
 **/
-int imx50_send_command(hid_device *device, sdp_t *command) {
+int imx50_send_command(imx50_device_t *device, sdp_t *command) {
     // pack the command
     unsigned char *data = imx50_pack_command(command);
     if(!data) {
@@ -99,7 +121,7 @@ int imx50_send_command(hid_device *device, sdp_t *command) {
     }
     
     // send the report
-    if(hid_write(device, data, REPORT_ID_SDP_CMD) < 0) {
+    if(hid_write((hid_device*)device, data, REPORT_ID_SDP_CMD) < 0) {
         free(data);
         return ERROR_WRITE; // error sending
     }
@@ -122,7 +144,7 @@ int imx50_send_command(hid_device *device, sdp_t *command) {
  
     @return Zero on success, error code otherwise.
 **/
-int imx50_send_data(hid_device *device, unsigned char *payload, unsigned int size) {
+int imx50_send_data(imx50_device_t *device, unsigned char *payload, unsigned int size) {
     if(size+1 > REPORT_DATA_SIZE) {
         return ERROR_PARAMETER;
     }
@@ -135,7 +157,7 @@ int imx50_send_data(hid_device *device, unsigned char *payload, unsigned int siz
         free(data);
         return ERROR_IO; // cannot copy data
     }
-    if(hid_write(device, data, size+1) < 0) {
+    if(hid_write((hid_device*)device, data, size+1) < 0) {
         free(data);
         return ERROR_WRITE; // error sending
     }
@@ -147,13 +169,14 @@ int imx50_send_data(hid_device *device, unsigned char *payload, unsigned int siz
     @brief Reads HAB state. (Report 3)
  
     This is the third report. The device will return either 
-    PRODUCTION_MODE (HAB enabled) or ENGINEER_MODE (HAB disabled).
+    HAB_PRODUCTION_MODE (HAB enabled) or 
+    HAB_ENGINEER_MODE (HAB disabled).
  
     @param device The HID device to read from.
     
     @return HAB status on success, error code otherwise.
 **/
-int imx50_get_hab_type(hid_device *device) {
+int imx50_get_hab_type(imx50_device_t *device) {
     unsigned char *data = malloc(REPORT_HAB_MODE_SIZE);
     int hab_type;
     
@@ -166,7 +189,7 @@ int imx50_get_hab_type(hid_device *device) {
         return ERROR_IO; // cannot write to memory
     }
     
-    if(hid_read(device, data, REPORT_HAB_MODE_SIZE) < 0) {
+    if(hid_read((hid_device*)device, data, REPORT_HAB_MODE_SIZE) < 0) {
         free(data);
         return ERROR_READ;
     }
@@ -189,7 +212,7 @@ int imx50_get_hab_type(hid_device *device) {
  
     @return Zero on success, error code otherwise.
 **/
-int imx50_get_dev_ack(hid_device *device, unsigned char **payload_p, unsigned int *size_p) {
+int imx50_get_dev_ack(imx50_device_t *device, unsigned char **payload_p, unsigned int *size_p) {
     unsigned char *data = malloc(REPORT_STATUS_SIZE);
     unsigned char *payload;
     if(!data) {
@@ -199,7 +222,7 @@ int imx50_get_dev_ack(hid_device *device, unsigned char **payload_p, unsigned in
         free(data);
         return ERROR_IO; // cannot write to memory
     }
-    if(hid_read(device, data, REPORT_STATUS_SIZE) < 0) {
+    if(hid_read((hid_device*)device, data, REPORT_STATUS_SIZE) < 0) {
         free(data);
         return ERROR_READ;
     }
@@ -217,65 +240,307 @@ int imx50_get_dev_ack(hid_device *device, unsigned char **payload_p, unsigned in
     return 0;
 }
 
-// comment out old code
-#if 0
 /**
-    @brief Reads values from the device
+    @brief Reads from the device's memory
     
-    This returns data read directly from the device at 
-    the specified address. It returns an array containing 
-    the data and must be freed.
- 
-    @param device The HID device to read from.
-    @param address The address to start reading.
-    @param format The size of each item in bits.
-    @param count How many items to read.
-    @param data The data to be dynamically allocated.
- 
-    @return Response code on success, -1 on error
-*/
-int imx50_read_register(hid_device *device, int address, char format, int count, void **data) {
-    sdp_t command;
-    unsigned char buf[65];
-    char *data_p = NULL;
-    int need = 0;
-    int size = 0;
-    int read;
-    uint32_t ret = -1;
+    @param device the HID device to read from.
+    @param address Where to start reading
+    @param buffer Buffer to read to
+    @param count How much to read (in bytes)
     
-    // set up command container
-    command.report_number = 1;
-    command.command_type = BSWAP16(READ_REGISTER);
-    command.address = BSWAP32((uint32_t)address);
-    command.format = format;
-    command.data_count = BSWAP32((uint32_t)count);
-    need = (format / 8) * count;
-    // send command
-    fprintf(stderr, "%lu\n", sizeof(command));
-    if(hid_write(device, (unsigned char*)&command, sizeof(command)) < 0) {
-        // error sending data
-        return -1;
+    @return Zero on success, error code otherwise
+**/
+int imx50_read_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count) {
+    sdp_t sdpCmd;
+    
+    memset(&sdpCmd, 0, sizeof(sdp_t)); // resets the struct 
+    sdpCmd.report_number = REPORT_ID_SDP_CMD;
+    sdpCmd.command_type = CMD_READ_REGISTER;
+    sdpCmd.address = address;
+    sdpCmd.format = BITSOF(int); // 32-bits = one byte
+    sdpCmd.data_count = count;
+    
+    if(imx50_send_command(device, &sdpCmd) != 0) {
+        return ERROR_COMMAND;
     }
-    // get response
-    while(size < need) {
-        read = hid_read_timeout(device, buf, sizeof(buf), 60000);
-        if(read < 0)
-            break;
-        int report_number = (int)buf[0];
-        void *buf_data = &buf[1];
-        if(report_number == 3) { // our reponse code
-            ret = *(uint32_t*)buf_data;
-            ret = BSWAP32(ret);
-        } else { // we got data
-            // the +/- 1 is there to account for the extra byte at the beginning
-            data_p = realloc(data_p, size + read-1);
-            memcpy(data_p + read-1, buf_data, read-1);
-            size += read-1;
+    
+    if(imx50_get_hab_type(device) < 0) {
+        return ERROR_RETURN;
+    }
+    
+    unsigned int max_trans_size = REPORT_STATUS_SIZE - 1;
+    unsigned int trans_size;
+    unsigned char *data;
+    
+    while(count > 0) {
+        trans_size = (count > max_trans_size) ? max_trans_size : count;
+        
+        memset(data, 0, REPORT_STATUS_SIZE);
+        
+        if(imx50_get_dev_ack(device, &data, &max_trans_size) < 0) { // report 4 contains return value
+            return ERROR_READ;
         }
+        
+        memcpy(buffer, data, trans_size);
+        free(data); // malloc'd in imx50_get_dev_ack()
+        buffer += trans_size;
+        count -= trans_size;
     }
-    *data = data_p;
     
-    return ret;
+    return 0;
 }
-#endif
 
+/**
+    @brief Writes to a single register in memory
+    
+    @param device the HID device to write to.
+    @param address Where to write in memory
+    @param data A byte of data to write
+    
+    @return Zero on success, error code otherwise
+**/
+int imx50_write_register(imx50_device_t *device, unsigned int address, unsigned int data) {
+    sdp_t sdpCmd;
+    
+    memset(&sdpCmd, 0, sizeof(sdp_t)); // resets the struct 
+    sdpCmd.report_number = REPORT_ID_SDP_CMD;
+    sdpCmd.command_type = CMD_WRITE_REGISTER;
+    sdpCmd.address = address;
+    sdpCmd.format = BITSOF(int); // 32-bits = one byte
+    sdpCmd.data_count = 1;
+    sdpCmd.data = data;
+    
+    if(imx50_send_command(device, &sdpCmd) != 0) {
+        return ERROR_COMMAND;
+    }
+    
+    if(imx50_get_hab_type(device) < 0) {
+        return ERROR_RETURN;
+    }
+    
+    unsigned int *status_p;
+    unsigned int status;
+    unsigned int size;
+    if(imx50_get_dev_ack(device, &status_p, &size) < 0) {
+        return ERROR_READ;
+    }
+    status = BSWAP32(status_p[0]);
+    // we assume status is big-endian, but that's not required
+    // return values are same in both endian
+    // for ex: 0x128A8A12 is same backwards and forwards
+    free(status_p);
+    
+    if(status != ACK_WRITE_COMPLETE) {
+        return ERROR_WRITE;
+    }
+    
+    return 0;
+}
+
+/**
+    @brief Writes to the device's memory
+    
+    @param device the HID device to write to.
+    @param address Where to start writing
+    @param buffer Buffer to write from
+    @param count How much to write (in bytes)
+    
+    @return Zero on success, error code otherwise
+**/
+int imx50_write_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count) {
+    sdp_t sdpCmd;
+    
+    memset(&sdpCmd, 0, sizeof(sdp_t)); // resets the struct 
+    sdpCmd.report_number = REPORT_ID_SDP_CMD;
+    sdpCmd.command_type = CMD_WRITE_FILE;
+    sdpCmd.address = address;
+    sdpCmd.data_count = count;
+    
+    if(imx50_send_command(device, &sdpCmd) != 0) {
+        return ERROR_COMMAND;
+    }
+    
+    // TODO: Find out if this is required
+    sleep(10); // this was in the reference implementation
+    
+    unsigned int max_trans_size = REPORT_DATA_SIZE - 1;
+    unsigned int trans_size;
+    
+    while(count > 0) {
+        trans_size = (count > max_trans_size) ? max_trans_size : count;
+        
+        if(imx50_send_data(device, buffer, trans_size) < 0) { // report 2 contains data
+            return ERROR_WRITE;
+        }
+        
+        buffer += trans_size;
+        count -= trans_size;
+    }
+    
+    if(imx50_get_hab_type(device) < 0) {
+        return ERROR_RETURN;
+    }
+    
+    unsigned int *status_p;
+    unsigned int status;
+    unsigned int size;
+    if(imx50_get_dev_ack(device, &status_p, &size) < 0) {
+        return ERROR_READ;
+    }
+    status = BSWAP32(status_p[0]);
+    free(status_p);
+    
+    if(status != ACK_WRITE_COMPLETE) {
+        return ERROR_WRITE;
+    }
+    
+    return 0;
+}
+
+/**
+    @brief Get's error code from device
+    
+    @param device the HID device
+    
+    @return Error status from device (can be zero)
+**/
+int imx50_error_status(imx50_device_t *device) {
+    sdp_t sdpCmd;
+    
+    memset(&sdpCmd, 0, sizeof(sdp_t)); // resets the struct 
+    sdpCmd.report_number = CMD_ERROR_STATUS;
+    sdpCmd.command_type = CMD_WRITE_FILE;
+    
+    if(imx50_send_command(device, &sdpCmd) != 0) {
+        return ERROR_COMMAND;
+    }
+    
+    if(imx50_get_hab_type(device) < 0) {
+        return ERROR_RETURN;
+    }
+    
+    unsigned int *status_p;
+    unsigned int status;
+    unsigned int size;
+    if(imx50_get_dev_ack(device, &status_p, &size) < 0) {
+        return ERROR_READ;
+    }
+    status = BSWAP32(status_p[0]); // assmue status is in big-endian
+    free(status_p);
+    
+    return status;
+}
+
+/**
+    @brief Writes to multiple registers in memory
+    
+    @param device the HID device to write to
+    @param buffer An array of DCD members
+    @param count Number of DCD members
+    
+    @see struct dcd
+    @return Zero on success, error code otherwise
+**/
+int imx50_dcd_write(imx50_device_t *device, dcd_t *buffer, unsigned int count) {
+    sdp_t sdpCmd;
+    
+    memset(&sdpCmd, 0, sizeof(sdp_t)); // resets the struct 
+    sdpCmd.report_number = REPORT_ID_SDP_CMD;
+    sdpCmd.command_type = CMD_DCD_WRITE;
+    
+    unsigned int i;
+    unsigned int size;
+    unsigned char *payload;
+    
+    while(count > 0) {
+        sdpCmd.data_count = (count > MAX_DCD_WRITE_REG_CNT) ? MAX_DCD_WRITE_REG_CNT : count;
+        size = sdpCmd.data_count * sizeof(dcd_t);
+        
+        if(imx50_send_command(device, &sdpCmd) != 0) {
+            return ERROR_COMMAND;
+        }
+        
+        // pack and convert dcd to big endian
+        payload = malloc(size);
+        for(i = 0; i < sdpCmd.data_count; i++) {
+            // this looks complicated but all it does is loop through a 2D array of type [dcd_t][int]
+            // and sets the value of each element to the byte-swapped version of the DCD member
+            // the weird casting is to make sure that everything's packed with one-byte alignment
+            // which should never be a problem, but you'd never know...
+            *(unsigned int*)&payload[i*sizeof(dcd_t) + 0*sizeof(int)] = BSWAP32(buffer[i].data_format);
+            *(unsigned int*)&payload[i*sizeof(dcd_t) + 1*sizeof(int)] = BSWAP32(buffer[i].address);
+            *(unsigned int*)&payload[i*sizeof(dcd_t) + 2*sizeof(int)] = BSWAP32(buffer[i].value);
+        }
+        
+        if(imx50_send_data(device, payload, size) < 0) {
+            free(payload);
+            return ERROR_WRITE;
+        }
+        free(payload);
+    
+        if(imx50_get_hab_type(device) < 0) {
+            return ERROR_RETURN;
+        }
+        
+        unsigned int *status_p;
+        unsigned int status;
+        unsigned int size;
+        if(imx50_get_dev_ack(device, &status_p, &size) < 0) {
+            return ERROR_READ;
+        }
+        status = BSWAP32(status_p[0]);
+        free(status_p);
+        
+        if(status != ACK_WRITE_COMPLETE) {
+            return ERROR_WRITE;
+        }
+        
+        buffer += size;
+        count -= sdpCmd.data_count;
+    }
+    
+    return 0;
+}
+
+/**
+    @brief Execute commands and exit
+    
+    Once this is called, the device will be unloaded and 
+    will start executing instructions starting at the address.
+    You must still free the device with imx50_free_device().
+    
+    @param device the HID device to write to
+    @param address The address to jump to
+    
+    @return Zero on success, error code, or status code from device
+**/
+int imx50_jump(imx50_device_t *device, unsigned int address) {
+    sdp_t sdpCmd;
+    
+    memset(&sdpCmd, 0, sizeof(sdp_t)); // resets the struct 
+    sdpCmd.report_number = CMD_ERROR_STATUS;
+    sdpCmd.command_type = CMD_JUMP_ADDRESS;
+    sdpCmd.address = address;
+    
+    if(imx50_send_command(device, &sdpCmd) != 0) {
+        return ERROR_COMMAND;
+    }
+    
+    if(imx50_get_hab_type(device) < 0) {
+        return ERROR_RETURN;
+    }
+    
+    unsigned int *status_p;
+    unsigned int status;
+    unsigned int size;
+    if(imx50_get_dev_ack(device, &status_p, &size) < 0) {
+        return ERROR_READ;
+    }
+    status = BSWAP32(status_p[0]); // assmue status is in big-endian
+    free(status_p);
+    if(status > 0) {
+        return status; // error occured
+    }
+    
+    return 0;
+}
