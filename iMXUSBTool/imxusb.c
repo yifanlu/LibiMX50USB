@@ -18,11 +18,28 @@
 
 #include "hidapi.h"
 #include "imxusb.h"
-#include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
+
+#ifndef _WIN32
+// posix includes
+#include <stdint.h>
 #include <string.h>
 #include <unistd.h>
+// sleep
+#define SLEEP(x) sleep(x)
+#else
+// fixed width integers
+// unfortunally, VC++ lacks unsigned types
+typedef __int8 uint8_t;
+typedef __int16 uint16_t;
+typedef __int32 uint32_t;
+typedef __int64 uint64_t;
+// WinRT includes
+#include <windows.h>
+#include <memory.h
+// sleep
+#define SLEEP(x) Sleep(x)
+#endif
 
 /**
     @brief Get a iMX50 usb download device
@@ -39,7 +56,7 @@ imx50_device_t *imx50_init_device() {
     while(handle == NULL) {
         dev = hid_enumerate(IMX50_VID, IMX50_PID);
         if(dev == NULL) {
-            sleep(5);
+            SLEEP(5);
             continue; // loop
         }
         handle = hid_open(dev->vendor_id, dev->product_id, dev->serial_number);
@@ -361,7 +378,7 @@ int imx50_write_memory(imx50_device_t *device, unsigned int address, unsigned ch
     }
     
     // TODO: Find out if this is required
-    sleep(10); // this was in the reference implementation
+    SLEEP(10); // this was in the reference implementation
     
     unsigned int max_trans_size = REPORT_DATA_SIZE - 1;
     unsigned int trans_size;
@@ -467,9 +484,9 @@ int imx50_dcd_write(imx50_device_t *device, dcd_t *buffer, unsigned int count) {
             // and sets the value of each element to the byte-swapped version of the DCD member
             // the weird casting is to make sure that everything's packed with one-byte alignment
             // which should never be a problem, but you'd never know...
-            *(unsigned int*)&payload[i*sizeof(dcd_t) + 0*sizeof(int)] = BSWAP32(buffer[i].data_format);
-            *(unsigned int*)&payload[i*sizeof(dcd_t) + 1*sizeof(int)] = BSWAP32(buffer[i].address);
-            *(unsigned int*)&payload[i*sizeof(dcd_t) + 2*sizeof(int)] = BSWAP32(buffer[i].value);
+            *(uint32_t*)&payload[i*sizeof(dcd_t) + 0*sizeof(int)] = BSWAP32(buffer[i].data_format);
+            *(uint32_t*)&payload[i*sizeof(dcd_t) + 1*sizeof(int)] = BSWAP32(buffer[i].address);
+            *(uint32_t*)&payload[i*sizeof(dcd_t) + 2*sizeof(int)] = BSWAP32(buffer[i].value);
         }
         
         if(imx50_send_data(device, payload, size) < 0) {
@@ -543,4 +560,140 @@ int imx50_jump(imx50_device_t *device, unsigned int address) {
     }
     
     return 0;
+}
+
+/**
+    @brief Loads an arbitrary file unto the device. 
+    
+    This function splits the input file into chunks of 
+    MAX_DOWNLOAD_SIZE and sends it using imx50_write_memory().
+    
+    @param device the HID device to write to
+    @param address The address to write to on the device
+    @param filename The name of the file to load
+    
+    @see imx50_write_memory
+    @return Zero on success, error code otherwise
+**/
+int imx50_load_file(imx50_device_t *device, unsigned int address, const char *filename) {
+    unsigned int size;
+    unsigned int offset = 0;
+    unsigned int trans_size = 0;
+    unsigned char buffer[MAX_DOWNLOAD_SIZE];
+#ifdef _WIN32 //win32 code
+    HANDLE hFile = CreateFile(filename, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    DWORD dwBytesRead = 0;
+    if(hFile == INVALID_HANDLE_VALUE) {
+        return ERROR_IO;
+    }
+#else // posix
+    FILE *fp = fopen(filename, "r");
+    if(!fp) {
+        return ERROR_IO;
+    }
+    
+    fseek(fp, 0L, SEEK_END);
+    size = ftell(fp); // get file size
+    fseek(fp, 0L, SEEK_SET); // reset fp
+#endif
+    
+    for(; offset < size; offset += trans_size) {
+        trans_size = size - offset;
+        if(trans_size > MAX_DOWNLOAD_SIZE)£û
+            trans_size = MAX_DOWNLOAD_SIZE;
+        }
+        
+#ifdef _WIN32
+        if(ReadFile(hFile, buffer, trans_size, &dwBytesRead, NULL) == FALSE) {
+            CloseHandle(hFile);
+            return ERROR_IO;
+        }
+        if(dwBytesRead < trans_size) {
+            CloseHandle(hFile);
+            return ERROR_IO;
+        }
+#else
+        if(fread(buffer, sizeof(char), trans_size, fp) < trans_size) {
+            fclose(fp);
+            return ERROR_IO;
+        }
+#endif
+        
+        if(imx50_write_memory(device, address + offset, buffer, trans_size) != 0) {
+            break;
+        }
+    }
+    
+    // close file
+#ifdef _WIN32
+    CloseHandle(hFile);
+#else
+    fclose(fp);
+#endif
+    
+    return offset >= size ? 0 : ERROR_WRITE; // did the loop complete?
+}
+
+/**
+    @brief Sets up the device's external memory
+    
+    iMX50 devices, on startup, must be set up before 
+    the entire DDR RAM can be accessed. Before set up, 
+    you can only read/write the iMX50 internal memory.
+    The device is set up using imx50_dcd_write() with 
+    pre-coded DCD members. Experts can set up the RAM 
+    manually using that function.
+    
+    @param device the HID device to set up
+    
+    @see imx50_dcd_write
+    @return imx50_dcd_write()'s return value
+**/
+int imx50_init_memory(imx50_device_t *device) {
+    static dcd_t mx508_lpddr2_init = 
+    {
+        { 32, 0x53fd400c, 0x00000004 }, { 32, 0x63f80000, 0x00001232 }, { 32, 0x63f80004, 0x00000002 }, { 32, 0x63f80008, 0x00000080 }, { 32, 0x63f8001c, 0x00000080 }, 
+        { 32, 0x63f8000c, 0x00000002 }, { 32, 0x63f80020, 0x00000002 }, { 32, 0x63f80010, 0x00000001 }, { 32, 0x63f80024, 0x00000001 }, { 32, 0x63f80000, 0x00001232 }, 
+        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
+        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
+        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
+        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
+        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
+        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
+        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
+        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
+        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
+        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
+        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fd400c, 0x00000000 }, { 32, 0x53fd4068, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, 
+        { 32, 0x53fd4070, 0xffffffff }, { 32, 0x53fd4074, 0xffffffff }, { 32, 0x53fd4078, 0xffffffff }, { 32, 0x53fd407c, 0xffffffff }, { 32, 0x53fd4080, 0xffffffff }, 
+        { 32, 0x53fd4084, 0xffffffff }, { 32, 0x53FD4098, 0x80000003 }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, 
+        { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, 
+        { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, 
+        { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, 
+        { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, 
+        { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, 
+        { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fa86ac, 0x04000000 }, { 32, 0x53fa86a4, 0x00180000 }, { 32, 0x53fa8668, 0x00180000 }, { 32, 0x53fa8698, 0x00180000 }, 
+        { 32, 0x53fa86a0, 0x00180000 }, { 32, 0x53fa86a8, 0x00180000 }, { 32, 0x53fa86b4, 0x00180000 }, { 32, 0x53fa8498, 0x00180000 }, { 32, 0x53fa849c, 0x00180000 }, 
+        { 32, 0x53fa84f0, 0x00180000 }, { 32, 0x53fa8500, 0x00180000 }, { 32, 0x53fa84c8, 0x00180000 }, { 32, 0x53fa8528, 0x00180000 }, { 32, 0x53fa84f4, 0x00180000 }, 
+        { 32, 0x53fa84fc, 0x00180000 }, { 32, 0x53fa84cc, 0x00180000 }, { 32, 0x53fa8524, 0x00180000 }, { 32, 0x14000128, 0x08170101 }, { 32, 0x14000128, 0x00000000 }, 
+        { 32, 0x14000128, 0x08170111 }, { 32, 0x14000128, 0x00000000 }, { 32, 0x14000000, 0x00000500 }, { 32, 0x14000004, 0x00000000 }, { 32, 0x14000008, 0x0000001b }, 
+        { 32, 0x1400000c, 0x0000d056 }, { 32, 0x14000010, 0x0000010b }, { 32, 0x14000014, 0x00000a6b }, { 32, 0x14000018, 0x02030d0c }, { 32, 0x1400001c, 0x0c110304 }, 
+        { 32, 0x14000020, 0x05020503 }, { 32, 0x14000024, 0x0048eb05 }, { 32, 0x14000028, 0x01000403 }, { 32, 0x1400002c, 0x09040501 }, { 32, 0x14000030, 0x02000000 }, 
+        { 32, 0x14000034, 0x00000e02 }, { 32, 0x14000038, 0x00000006 }, { 32, 0x1400003c, 0x00002301 }, { 32, 0x14000040, 0x00050300 }, { 32, 0x14000044, 0x00000300 }, 
+        { 32, 0x14000048, 0x00260026 }, { 32, 0x1400004c, 0x00010000 }, { 32, 0x1400005c, 0x02000000 }, { 32, 0x14000060, 0x00000002 }, { 32, 0x14000064, 0x00000000 }, 
+        { 32, 0x14000068, 0x00000000 }, { 32, 0x1400006c, 0x00040042 }, { 32, 0x14000070, 0x00000001 }, { 32, 0x14000074, 0x00000000 }, { 32, 0x14000078, 0x00040042 }, 
+        { 32, 0x1400007c, 0x00000001 }, { 32, 0x14000080, 0x010b0000 }, { 32, 0x14000084, 0x00000060 }, { 32, 0x14000088, 0x02400018 }, { 32, 0x1400008c, 0x01000e00 }, 
+        { 32, 0x14000090, 0x0a010101 }, { 32, 0x14000094, 0x01011f1f }, { 32, 0x14000098, 0x01010101 }, { 32, 0x1400009c, 0x00030101 }, { 32, 0x140000a0, 0x00010000 }, 
+        { 32, 0x140000a4, 0x00010000 }, { 32, 0x140000a8, 0x00000000 }, { 32, 0x140000ac, 0x0000ffff }, { 32, 0x140000c8, 0x02020101 }, { 32, 0x140000cc, 0x01000000 }, 
+        { 32, 0x140000d0, 0x01000201 }, { 32, 0x140000d4, 0x00000200 }, { 32, 0x140000d8, 0x00000102 }, { 32, 0x140000dc, 0x0003ffff }, { 32, 0x140000e0, 0x0000ffff }, 
+        { 32, 0x140000e4, 0x02020000 }, { 32, 0x140000e8, 0x02020202 }, { 32, 0x140000ec, 0x00000202 }, { 32, 0x140000f0, 0x01010064 }, { 32, 0x140000f4, 0x01010101 }, 
+        { 32, 0x140000f8, 0x00010101 }, { 32, 0x140000fc, 0x00000064 }, { 32, 0x14000100, 0x00000000 }, { 32, 0x14000104, 0x02000802 }, { 32, 0x14000108, 0x04080000 }, 
+        { 32, 0x1400010c, 0x04080408 }, { 32, 0x14000110, 0x04080408 }, { 32, 0x14000114, 0x03060408 }, { 32, 0x14000118, 0x01010002 }, { 32, 0x1400011c, 0x00000000 }, 
+        { 32, 0x14000200, 0x00000000 }, { 32, 0x14000204, 0x00000000 }, { 32, 0x14000208, 0xf5003a27 }, { 32, 0x14000210, 0xf5003a27 }, { 32, 0x14000218, 0xf5003a27 }, 
+        { 32, 0x14000220, 0xf5003a27 }, { 32, 0x14000228, 0xf5003a27 }, { 32, 0x1400020c, 0x074002e1 }, { 32, 0x14000214, 0x074002e1 }, { 32, 0x1400021c, 0x074002e1 }, 
+        { 32, 0x14000224, 0x074002e1 }, { 32, 0x1400022c, 0x074002e1 }, { 32, 0x14000230, 0x00000000 }, { 32, 0x14000234, 0x00810006 }, { 32, 0x14000238, 0x60099414 }, 
+        { 32, 0x14000240, 0x60099414 }, { 32, 0x14000248, 0x60099414 }, { 32, 0x14000250, 0x60099414 }, { 32, 0x14000258, 0x60099414 }, { 32, 0x1400023c, 0x000a1401 }, 
+        { 32, 0x14000244, 0x000a1401 }, { 32, 0x1400024c, 0x000a1401 }, { 32, 0x14000254, 0x000a1401 }, { 32, 0x1400025c, 0x000a1401 }, { 32, 0x14000000, 0x00000501 }
+    }
+    return imx50_dcd_write(device, &mx508_lpddr2_init, sizeof(mx508_lpddr2_init) / sizeof(dcd_t));
 }

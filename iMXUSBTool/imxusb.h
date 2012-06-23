@@ -38,6 +38,7 @@
 #define ACK_FILE_COMPLETE       0x88888888
 
 #define MAX_DCD_WRITE_REG_CNT   85
+#define MAX_DOWNLOAD_SIZE       0x200000
 
 #define REPORT_ID_SDP_CMD       1
 #define REPORT_ID_DATA          2
@@ -56,6 +57,8 @@
 #define ERROR_PARAMETER         -5
 #define ERROR_COMMAND           -6
 #define ERROR_RETURN            -7
+
+#define IVT_BARKER_HEADER       0x402000D1
 
 #define BITSOF(x)               ( 8 * sizeof(x) )
 #define BSWAP16(x)              ( (x >> 8) | (x << 8) )
@@ -80,11 +83,30 @@ struct dcd {
     unsigned int value;
 };
 
+struct ivt {
+    unsigned int header;
+    unsigned int entry_address;
+    unsigned int reserved1;
+    unsigned int dcd_address;
+    unsigned int boot_data_address;
+    unsigned int self_address;
+    unsigned int csf_address;
+    unsigned int reserved2;
+};
+
+struct boot_data {
+    unsigned int start_address;
+    unsigned int size;
+    unsigned int plugin_flag;
+};
+
 // abstration for hid_device
 struct imx50_device;
 
 typedef struct sdp sdp_t;
 typedef struct dcd dcd_t;
+typedef struct ivt ivt_t;
+typedef struct boot_data boot_data_t;
 typedef struct imx50_device imx50_device_t;
 
 // helper functions (hidden to user)
@@ -100,12 +122,16 @@ int imx50_send_data(imx50_device_t *device, unsigned char *payload, unsigned int
 int imx50_get_hab_type(imx50_device_t *device);
 int imx50_get_dev_ack(imx50_device_t *device, unsigned char **payload_p, unsigned int *size_p);
 
-// commands
+// device commands
 int imx50_read_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count);
 int imx50_write_register(imx50_device_t *device, unsigned int address, unsigned int data);
 int imx50_write_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count);
 int imx50_error_status(imx50_device_t *device);
 int imx50_dcd_write(imx50_device_t *device, dcd_t *buffer, unsigned int count);
 int imx50_jump(imx50_device_t *device, unsigned int address);
+
+// abstractions
+int imx50_load_file(imx50_device_t *device, unsigned int address, const char *filename);
+int imx50_init_memory(imx50_device_t *device);
 
 #endif
