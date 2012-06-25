@@ -1,5 +1,5 @@
 //
-//  iMX50 USB Tool Library
+//  iMX50 USB Library
 //
 //  Created by Yifan Lu
 //  This program is free software: you can redistribute it and/or modify
@@ -18,15 +18,18 @@
 
 #include "hidapi.h"
 #include "imxusb.h"
-#include <stdlib.h>
+#include <stdio.h>
 
 #ifndef _WIN32
 // posix includes
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-// sleep
+// function macros
 #define SLEEP(x) sleep(x)
+#define TRACE(msg...) \
+    (fprintf(stderr, msg))
 #else
 // fixed width integers
 // unfortunally, VC++ lacks unsigned types
@@ -36,10 +39,13 @@ typedef __int32 uint32_t;
 typedef __int64 uint64_t;
 // WinRT includes
 #include <windows.h>
-#include <memory.h
-// sleep
+#include <memory.h>
+// function macros
 #define SLEEP(x) Sleep(x)
+#define TRACE printf
 #endif
+
+int g_imx50_log_mask = ERROR_LOG;
 
 /**
     @brief Get a iMX50 usb download device
@@ -49,16 +55,19 @@ typedef __int64 uint64_t;
  
     @return A device will be returned on success, NULL on error
 */
-imx50_device_t *imx50_init_device() {
+IMX50USB_EXPORT imx50_device_t *imx50_init_device() {
     hid_device *handle = NULL;
     struct hid_device_info *dev;
     
     while(handle == NULL) {
+        if(IS_LOGGING(DEBUG_LOG)) TRACE("[%s] D:Enumerating devices [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         dev = hid_enumerate(IMX50_VID, IMX50_PID);
         if(dev == NULL) {
             SLEEP(5);
             continue; // loop
         }
+        if(IS_LOGGING(DEBUG_LOG)) TRACE("[%s] D:Opening device VID:%04hX PID:%04hx path: %s [%s:%d]\n", 
+            __FUNCTION__, dev->vendor_id, dev->product_id, dev->path, __FILE__, __LINE__);
         handle = hid_open(dev->vendor_id, dev->product_id, dev->serial_number);
         hid_free_enumeration(dev);
     }
@@ -71,8 +80,18 @@ imx50_device_t *imx50_init_device() {
  
     @param device The device to free.
  */
-void imx50_close_device(imx50_device_t *device) {
+IMX50USB_EXPORT void imx50_close_device(imx50_device_t *device) {
+    if(IS_LOGGING(DEBUG_LOG)) TRACE("[%s] D:Closing device %p [%s:%d]\n", __FUNCTION__, device, __FILE__, __LINE__);
     hid_close((hid_device*)device);
+}
+
+/**
+    @brief Sets the logging level
+ 
+    @param log_mask Logging level.
+ */
+IMX50USB_EXPORT void imx50_log_level(int log_mask) {
+    g_imx50_log_mask = log_mask;
 }
 
 /**
@@ -90,7 +109,7 @@ void imx50_close_device(imx50_device_t *device) {
  */
 unsigned char *imx50_pack_command(sdp_t *command) {
     unsigned char *data = malloc(REPORT_SDP_CMD_SIZE);
-    uint32_t *payload = (uint32_t*)data+1; // first byte is number
+    uint32_t *payload = (uint32_t*)(data+1); // first byte is number
     if(!data) {
         return NULL;
     }
@@ -120,6 +139,46 @@ unsigned char *imx50_pack_command(sdp_t *command) {
 }
 
 /**
+    @brief Prints out a HEX dump of data.
+
+    For debugging commands.
+ 
+    @param data Data to dump
+    @param size Number of bytes to print
+    @param num Number of bytes to print per line
+ */
+void imx50_hex_dump(unsigned char *data, unsigned int size, unsigned int num) {
+    unsigned int i = 0, j = 0, k = 0, l = 0;
+    // I hate letters, but I can't come up with good names
+    // i = counter, j = bytes printed, k = number of place values, l = temp
+    for(l = size/num, k = 1; l > 0; l/=num, k++); // find number of zeros to prepend line number
+    while(j < size) {
+        // line number
+        fprintf(stderr, "%0*X: ", k, j);
+        // hex value
+        for(i = 0; i < num; i++, j++) {
+            if(j < size) {
+                fprintf(stderr, "%02X ", data[j]);
+            } else { // print blank spaces
+                fprintf(stderr, "%s ", "  ");
+            }
+        }
+        // seperator
+        fprintf(stderr, "%s", "| ");
+        // ascii value
+        for(i = num; i > 0; i--) {
+            if(j-i < size) {
+                fprintf(stderr, "%c", data[j-i] < 32 || data[j-i] > 126 ? '.' : data[j-i]); // print only visible characters
+            } else {
+                fprintf(stderr, "%s", " ");
+            }
+        }
+        // new line
+        fprintf(stderr, "%s", "\n");
+    }
+}
+
+/**
     @brief Sends the command to the device. (Report 1)
  
     This is the first report, it will pack and then send the 
@@ -130,18 +189,23 @@ unsigned char *imx50_pack_command(sdp_t *command) {
  
     @return Zero on success, error code otherwise.
 **/
-int imx50_send_command(imx50_device_t *device, sdp_t *command) {
+IMX50USB_EXPORT int imx50_send_command(imx50_device_t *device, sdp_t *command) {
     // pack the command
     unsigned char *data = imx50_pack_command(command);
     if(!data) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Out of memory [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_OUT_OF_MEMORY; // error packing
     }
     
     // send the report
-    if(hid_write((hid_device*)device, data, REPORT_ID_SDP_CMD) < 0) {
+    if(IS_LOGGING(INFO_LOG)) TRACE("[%s] I:Sending command (report 1) %#04Xh [%s:%d]\n", __FUNCTION__, command->command_type, __FILE__, __LINE__);
+    if(IS_LOGGING(DEBUG_LOG)) imx50_hex_dump(data, REPORT_SDP_CMD_SIZE, 0x10);
+    if(hid_write((hid_device*)device, data, REPORT_SDP_CMD_SIZE) < 0) {
         free(data);
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error sending data [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_WRITE; // error sending
     }
+    if(IS_LOGGING(INFO_LOG)) TRACE("[%s] I:Command sent successfully [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
     
     free(data);
     return 0;
@@ -161,23 +225,33 @@ int imx50_send_command(imx50_device_t *device, sdp_t *command) {
  
     @return Zero on success, error code otherwise.
 **/
-int imx50_send_data(imx50_device_t *device, unsigned char *payload, unsigned int size) {
+IMX50USB_EXPORT int imx50_send_data(imx50_device_t *device, unsigned char *payload, unsigned int size) {
+    unsigned char *data;
+
     if(size+1 > REPORT_DATA_SIZE) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Size of data (%u) is too large. (max:%u) [%s:%d]\n", __FUNCTION__, size, REPORT_DATA_SIZE, __FILE__, __LINE__);
         return ERROR_PARAMETER;
     }
-    unsigned char *data = malloc(size + 1);
+    data = malloc(size + 1);
     if(!data) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Out of memory [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_OUT_OF_MEMORY; // cannot alloc memory
     }
     data[0] = REPORT_ID_DATA;
-    if(!memcpy(data+1, payload, REPORT_ID_DATA)) {
+    if(!memcpy(data+1, payload, size)) {
         free(data);
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Cannot copy data [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_IO; // cannot copy data
     }
+    if(IS_LOGGING(INFO_LOG)) TRACE("[%s] I:Sending data (report 2) [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
+    if(IS_LOGGING(DEBUG_LOG)) imx50_hex_dump(data, size+1, 0x10);
     if(hid_write((hid_device*)device, data, size+1) < 0) {
         free(data);
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error sending data [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_WRITE; // error sending
     }
+    if(IS_LOGGING(INFO_LOG)) TRACE("[%s] I:Data sent successfully [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
+
     free(data);
     return 0;
 }
@@ -193,23 +267,29 @@ int imx50_send_data(imx50_device_t *device, unsigned char *payload, unsigned int
     
     @return HAB status on success, error code otherwise.
 **/
-int imx50_get_hab_type(imx50_device_t *device) {
+IMX50USB_EXPORT int imx50_get_hab_type(imx50_device_t *device) {
     unsigned char *data = malloc(REPORT_HAB_MODE_SIZE);
     int hab_type;
     
     if(!data) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Out of memory [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_OUT_OF_MEMORY; // cannot alloc memory
     }
     
     if(!memset(data, 0, REPORT_HAB_MODE_SIZE)) {
         free(data);
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Access to memory denied [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_IO; // cannot write to memory
     }
     
+    if(IS_LOGGING(INFO_LOG)) TRACE("[%s] I:Reading HAB state (report 3) [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
     if(hid_read((hid_device*)device, data, REPORT_HAB_MODE_SIZE) < 0) {
         free(data);
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error reading response [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_READ;
     }
+    if(IS_LOGGING(DEBUG_LOG)) imx50_hex_dump(data, REPORT_HAB_MODE_SIZE, 0x10);
+    if(IS_LOGGING(INFO_LOG)) TRACE("[%s] I:HAB state read successfully [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
     hab_type = *(int*)(data+1);
     free(data);
     
@@ -229,31 +309,42 @@ int imx50_get_hab_type(imx50_device_t *device) {
  
     @return Zero on success, error code otherwise.
 **/
-int imx50_get_dev_ack(imx50_device_t *device, unsigned char **payload_p, unsigned int *size_p) {
+IMX50USB_EXPORT int imx50_get_dev_ack(imx50_device_t *device, unsigned char **payload_p, unsigned int *size_p) {
     unsigned char *data = malloc(REPORT_STATUS_SIZE);
     unsigned char *payload;
     if(!data) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Out of memory [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_OUT_OF_MEMORY; // cannot alloc memory
     }
     if(!memset(data, 0, REPORT_STATUS_SIZE)) {
         free(data);
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Access to memory denied [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_IO; // cannot write to memory
     }
+
+    if(IS_LOGGING(INFO_LOG)) TRACE("[%s] I:Recieving response (report 4) [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
     if(hid_read((hid_device*)device, data, REPORT_STATUS_SIZE) < 0) {
         free(data);
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error recieving response [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_READ;
     }
+    if(IS_LOGGING(DEBUG_LOG)) imx50_hex_dump(data, REPORT_STATUS_SIZE, 0x10);
+
     payload = malloc(REPORT_STATUS_SIZE - 1);
     if(!payload) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Out of memory [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_OUT_OF_MEMORY; // cannot alloc memory
     }
     if(!memcpy(payload, data+1, REPORT_STATUS_SIZE-1)) {
         free(payload);
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Access to memory denied [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_IO; // cannot write to memory
     }
     // set return values
     *payload_p = payload;
     *size_p = REPORT_STATUS_SIZE-1;
+
+    if(IS_LOGGING(INFO_LOG)) TRACE("[%s] I:Response recieved successfully [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
     return 0;
 }
 
@@ -267,8 +358,11 @@ int imx50_get_dev_ack(imx50_device_t *device, unsigned char **payload_p, unsigne
     
     @return Zero on success, error code otherwise
 **/
-int imx50_read_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count) {
+IMX50USB_EXPORT int imx50_read_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count) {
     sdp_t sdpCmd;
+    unsigned int max_trans_size = REPORT_STATUS_SIZE - 1;
+    unsigned int trans_size;
+    unsigned char *data = NULL;
     
     memset(&sdpCmd, 0, sizeof(sdp_t)); // resets the struct 
     sdpCmd.report_number = REPORT_ID_SDP_CMD;
@@ -278,23 +372,20 @@ int imx50_read_memory(imx50_device_t *device, unsigned int address, unsigned cha
     sdpCmd.data_count = count;
     
     if(imx50_send_command(device, &sdpCmd) != 0) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Cannot send command [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_COMMAND;
     }
     
     if(imx50_get_hab_type(device) < 0) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error recieving status [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_RETURN;
     }
-    
-    unsigned int max_trans_size = REPORT_STATUS_SIZE - 1;
-    unsigned int trans_size;
-    unsigned char *data;
     
     while(count > 0) {
         trans_size = (count > max_trans_size) ? max_trans_size : count;
         
-        memset(data, 0, REPORT_STATUS_SIZE);
-        
         if(imx50_get_dev_ack(device, &data, &max_trans_size) < 0) { // report 4 contains return value
+            if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error recieving data [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
             return ERROR_READ;
         }
         
@@ -316,8 +407,11 @@ int imx50_read_memory(imx50_device_t *device, unsigned int address, unsigned cha
     
     @return Zero on success, error code otherwise
 **/
-int imx50_write_register(imx50_device_t *device, unsigned int address, unsigned int data) {
+IMX50USB_EXPORT int imx50_write_register(imx50_device_t *device, unsigned int address, unsigned int data) {
     sdp_t sdpCmd;
+    unsigned int *status_p;
+    unsigned int status;
+    unsigned int size;
     
     memset(&sdpCmd, 0, sizeof(sdp_t)); // resets the struct 
     sdpCmd.report_number = REPORT_ID_SDP_CMD;
@@ -328,17 +422,17 @@ int imx50_write_register(imx50_device_t *device, unsigned int address, unsigned 
     sdpCmd.data = data;
     
     if(imx50_send_command(device, &sdpCmd) != 0) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Cannot send command [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_COMMAND;
     }
     
     if(imx50_get_hab_type(device) < 0) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error recieving status [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_RETURN;
     }
-    
-    unsigned int *status_p;
-    unsigned int status;
-    unsigned int size;
-    if(imx50_get_dev_ack(device, &status_p, &size) < 0) {
+
+    if(imx50_get_dev_ack(device, (unsigned char**)&status_p, &size) < 0) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error recieving response [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_READ;
     }
     status = BSWAP32(status_p[0]);
@@ -348,6 +442,7 @@ int imx50_write_register(imx50_device_t *device, unsigned int address, unsigned 
     free(status_p);
     
     if(status != ACK_WRITE_COMPLETE) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Reponse expected: %#08X, got: %#08X [%s:%d]\n", __FUNCTION__, ACK_WRITE_COMPLETE, status, __FILE__, __LINE__);
         return ERROR_WRITE;
     }
     
@@ -364,8 +459,13 @@ int imx50_write_register(imx50_device_t *device, unsigned int address, unsigned 
     
     @return Zero on success, error code otherwise
 **/
-int imx50_write_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count) {
+IMX50USB_EXPORT int imx50_write_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count) {
     sdp_t sdpCmd;
+    unsigned int max_trans_size = REPORT_DATA_SIZE - 1;
+    unsigned int trans_size;
+    unsigned int *status_p;
+    unsigned int status;
+    unsigned int size;
     
     memset(&sdpCmd, 0, sizeof(sdp_t)); // resets the struct 
     sdpCmd.report_number = REPORT_ID_SDP_CMD;
@@ -374,14 +474,12 @@ int imx50_write_memory(imx50_device_t *device, unsigned int address, unsigned ch
     sdpCmd.data_count = count;
     
     if(imx50_send_command(device, &sdpCmd) != 0) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Cannot send command [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_COMMAND;
     }
     
     // TODO: Find out if this is required
     SLEEP(10); // this was in the reference implementation
-    
-    unsigned int max_trans_size = REPORT_DATA_SIZE - 1;
-    unsigned int trans_size;
     
     while(count > 0) {
         trans_size = (count > max_trans_size) ? max_trans_size : count;
@@ -395,19 +493,19 @@ int imx50_write_memory(imx50_device_t *device, unsigned int address, unsigned ch
     }
     
     if(imx50_get_hab_type(device) < 0) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error recieving status [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_RETURN;
     }
     
-    unsigned int *status_p;
-    unsigned int status;
-    unsigned int size;
-    if(imx50_get_dev_ack(device, &status_p, &size) < 0) {
+    if(imx50_get_dev_ack(device, (unsigned char**)&status_p, &size) < 0) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error recieving response [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_READ;
     }
     status = BSWAP32(status_p[0]);
     free(status_p);
     
-    if(status != ACK_WRITE_COMPLETE) {
+    if(status != ACK_FILE_COMPLETE) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Reponse expected: %#08X, got: %#08X [%s:%d]\n", __FUNCTION__, ACK_FILE_COMPLETE, status, __FILE__, __LINE__);
         return ERROR_WRITE;
     }
     
@@ -421,25 +519,28 @@ int imx50_write_memory(imx50_device_t *device, unsigned int address, unsigned ch
     
     @return Error status from device (can be zero)
 **/
-int imx50_error_status(imx50_device_t *device) {
+IMX50USB_EXPORT int imx50_error_status(imx50_device_t *device) {
     sdp_t sdpCmd;
+    unsigned int *status_p;
+    unsigned int status;
+    unsigned int size;
     
     memset(&sdpCmd, 0, sizeof(sdp_t)); // resets the struct 
-    sdpCmd.report_number = CMD_ERROR_STATUS;
+    sdpCmd.report_number = REPORT_ID_SDP_CMD;
     sdpCmd.command_type = CMD_WRITE_FILE;
     
     if(imx50_send_command(device, &sdpCmd) != 0) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Cannot send command [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_COMMAND;
     }
     
     if(imx50_get_hab_type(device) < 0) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error recieving status [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_RETURN;
     }
     
-    unsigned int *status_p;
-    unsigned int status;
-    unsigned int size;
-    if(imx50_get_dev_ack(device, &status_p, &size) < 0) {
+    if(imx50_get_dev_ack(device, (unsigned char**)&status_p, &size) < 0) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error recieving response [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_READ;
     }
     status = BSWAP32(status_p[0]); // assmue status is in big-endian
@@ -458,22 +559,24 @@ int imx50_error_status(imx50_device_t *device) {
     @see struct dcd
     @return Zero on success, error code otherwise
 **/
-int imx50_dcd_write(imx50_device_t *device, dcd_t *buffer, unsigned int count) {
+IMX50USB_EXPORT int imx50_dcd_write(imx50_device_t *device, dcd_t *buffer, unsigned int count) {
     sdp_t sdpCmd;
+    unsigned int i;
+    unsigned int size;
+    unsigned char *payload;
+    unsigned int *status_p;
+    unsigned int status;
     
     memset(&sdpCmd, 0, sizeof(sdp_t)); // resets the struct 
     sdpCmd.report_number = REPORT_ID_SDP_CMD;
     sdpCmd.command_type = CMD_DCD_WRITE;
-    
-    unsigned int i;
-    unsigned int size;
-    unsigned char *payload;
     
     while(count > 0) {
         sdpCmd.data_count = (count > MAX_DCD_WRITE_REG_CNT) ? MAX_DCD_WRITE_REG_CNT : count;
         size = sdpCmd.data_count * sizeof(dcd_t);
         
         if(imx50_send_command(device, &sdpCmd) != 0) {
+            if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Cannot send command [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
             return ERROR_COMMAND;
         }
         
@@ -491,24 +594,25 @@ int imx50_dcd_write(imx50_device_t *device, dcd_t *buffer, unsigned int count) {
         
         if(imx50_send_data(device, payload, size) < 0) {
             free(payload);
+            if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Cannot send data [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
             return ERROR_WRITE;
         }
         free(payload);
     
         if(imx50_get_hab_type(device) < 0) {
+            if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error recieving status [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
             return ERROR_RETURN;
         }
         
-        unsigned int *status_p;
-        unsigned int status;
-        unsigned int size;
-        if(imx50_get_dev_ack(device, &status_p, &size) < 0) {
+        if(imx50_get_dev_ack(device, (unsigned char**)&status_p, &size) < 0) {
+            if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error recieving response [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
             return ERROR_READ;
         }
         status = BSWAP32(status_p[0]);
         free(status_p);
         
         if(status != ACK_WRITE_COMPLETE) {
+            if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Reponse expected: %#08X, got: %#08X [%s:%d]\n", __FUNCTION__, ACK_WRITE_COMPLETE, status, __FILE__, __LINE__);
             return ERROR_WRITE;
         }
         
@@ -531,31 +635,35 @@ int imx50_dcd_write(imx50_device_t *device, dcd_t *buffer, unsigned int count) {
     
     @return Zero on success, error code, or status code from device
 **/
-int imx50_jump(imx50_device_t *device, unsigned int address) {
+IMX50USB_EXPORT int imx50_jump(imx50_device_t *device, unsigned int address) {
     sdp_t sdpCmd;
+    unsigned int *status_p;
+    unsigned int status;
+    unsigned int size;
     
     memset(&sdpCmd, 0, sizeof(sdp_t)); // resets the struct 
-    sdpCmd.report_number = CMD_ERROR_STATUS;
+    sdpCmd.report_number = REPORT_ID_SDP_CMD;
     sdpCmd.command_type = CMD_JUMP_ADDRESS;
     sdpCmd.address = address;
     
     if(imx50_send_command(device, &sdpCmd) != 0) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Cannot send command [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_COMMAND;
     }
     
     if(imx50_get_hab_type(device) < 0) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error recieving status [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_RETURN;
     }
     
-    unsigned int *status_p;
-    unsigned int status;
-    unsigned int size;
-    if(imx50_get_dev_ack(device, &status_p, &size) < 0) {
+    if(imx50_get_dev_ack(device, (unsigned char**)&status_p, &size) < 0) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error recieving response [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_READ;
     }
     status = BSWAP32(status_p[0]); // assmue status is in big-endian
     free(status_p);
     if(status > 0) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Return status not zero, got: %#08X [%s:%d]\n", __FUNCTION__, status, __FILE__, __LINE__);
         return status; // error occured
     }
     
@@ -575,7 +683,7 @@ int imx50_jump(imx50_device_t *device, unsigned int address) {
     @see imx50_write_memory
     @return Zero on success, error code otherwise
 **/
-int imx50_load_file(imx50_device_t *device, unsigned int address, const char *filename) {
+IMX50USB_EXPORT int imx50_load_file(imx50_device_t *device, unsigned int address, const char *filename) {
     unsigned int size;
     unsigned int offset = 0;
     unsigned int trans_size = 0;
@@ -583,12 +691,20 @@ int imx50_load_file(imx50_device_t *device, unsigned int address, const char *fi
 #ifdef _WIN32 //win32 code
     HANDLE hFile = CreateFile(filename, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     DWORD dwBytesRead = 0;
+    LARGE_INTEGER lsize;
     if(hFile == INVALID_HANDLE_VALUE) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Cannot access %s [%s:%d]\n", __FUNCTION__, filename, __FILE__, __LINE__);
         return ERROR_IO;
     }
+    if(GetFileSizeEx(hFile, &lsize) != 0) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Cannot get file size %s [%s:%d]\n", __FUNCTION__, filename, __FILE__, __LINE__);
+        return ERROR_IO;
+    }
+    size = (unsigned int)lsize.QuadPart;
 #else // posix
     FILE *fp = fopen(filename, "r");
     if(!fp) {
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Cannot access %s [%s:%d]\n", __FUNCTION__, filename, __FILE__, __LINE__);
         return ERROR_IO;
     }
     
@@ -599,17 +715,19 @@ int imx50_load_file(imx50_device_t *device, unsigned int address, const char *fi
     
     for(; offset < size; offset += trans_size) {
         trans_size = size - offset;
-        if(trans_size > MAX_DOWNLOAD_SIZE)£û
+        if(trans_size > MAX_DOWNLOAD_SIZE){
             trans_size = MAX_DOWNLOAD_SIZE;
         }
         
 #ifdef _WIN32
         if(ReadFile(hFile, buffer, trans_size, &dwBytesRead, NULL) == FALSE) {
             CloseHandle(hFile);
+            if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Cannot read %s [%s:%d]\n", __FUNCTION__, filename, __FILE__, __LINE__);
             return ERROR_IO;
         }
         if(dwBytesRead < trans_size) {
             CloseHandle(hFile);
+            if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:File read incomplete. Read: %u, expected: %u [%s:%d]\n", __FUNCTION__, dwBytesRead, trans_size, __FILE__, __LINE__);
             return ERROR_IO;
         }
 #else
@@ -620,6 +738,7 @@ int imx50_load_file(imx50_device_t *device, unsigned int address, const char *fi
 #endif
         
         if(imx50_write_memory(device, address + offset, buffer, trans_size) != 0) {
+            if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error writing to device at %#X [%s:%d]\n", __FUNCTION__, address, __FILE__, __LINE__);
             break;
         }
     }
@@ -649,8 +768,8 @@ int imx50_load_file(imx50_device_t *device, unsigned int address, const char *fi
     @see imx50_dcd_write
     @return imx50_dcd_write()'s return value
 **/
-int imx50_init_memory(imx50_device_t *device) {
-    static dcd_t mx508_lpddr2_init = 
+IMX50USB_EXPORT int imx50_init_memory(imx50_device_t *device) {
+    static dcd_t mx508_lpddr2_init[] = 
     {
         { 32, 0x53fd400c, 0x00000004 }, { 32, 0x63f80000, 0x00001232 }, { 32, 0x63f80004, 0x00000002 }, { 32, 0x63f80008, 0x00000080 }, { 32, 0x63f8001c, 0x00000080 }, 
         { 32, 0x63f8000c, 0x00000002 }, { 32, 0x63f80020, 0x00000002 }, { 32, 0x63f80010, 0x00000001 }, { 32, 0x63f80024, 0x00000001 }, { 32, 0x63f80000, 0x00001232 }, 
@@ -694,6 +813,6 @@ int imx50_init_memory(imx50_device_t *device) {
         { 32, 0x14000224, 0x074002e1 }, { 32, 0x1400022c, 0x074002e1 }, { 32, 0x14000230, 0x00000000 }, { 32, 0x14000234, 0x00810006 }, { 32, 0x14000238, 0x60099414 }, 
         { 32, 0x14000240, 0x60099414 }, { 32, 0x14000248, 0x60099414 }, { 32, 0x14000250, 0x60099414 }, { 32, 0x14000258, 0x60099414 }, { 32, 0x1400023c, 0x000a1401 }, 
         { 32, 0x14000244, 0x000a1401 }, { 32, 0x1400024c, 0x000a1401 }, { 32, 0x14000254, 0x000a1401 }, { 32, 0x1400025c, 0x000a1401 }, { 32, 0x14000000, 0x00000501 }
-    }
-    return imx50_dcd_write(device, &mx508_lpddr2_init, sizeof(mx508_lpddr2_init) / sizeof(dcd_t));
+    };
+    return imx50_dcd_write(device, mx508_lpddr2_init, sizeof(mx508_lpddr2_init) / sizeof(dcd_t));
 }

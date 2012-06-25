@@ -1,6 +1,10 @@
 .DS_Store
-iMXUSBTool/hid.c
-iMXUSBTool/hidapi.h
+./Debug
+./Release
+./*.ncb
+./*.suo
+./*.user
 *.so
 *.o
-
+*.dll
+*.exe

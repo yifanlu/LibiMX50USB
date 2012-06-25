@@ -1,5 +1,5 @@
 //
-//  iMX50 USB Tool Library
+//  iMX50 USB Library
 //
 //  Created by Yifan Lu
 //  This program is free software: you can redistribute it and/or modify
@@ -16,8 +16,8 @@
 //  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
 
-#ifndef iMXUSBTool_imxusb_h
-#define iMXUSBTool_imxusb_h
+#ifndef IMX50USB
+#define IMX50USB
 
 #define IMX50_VID               0x15A2
 #define IMX50_PID               0x0052
@@ -60,78 +60,102 @@
 
 #define IVT_BARKER_HEADER       0x402000D1
 
+#define DEBUG_LOG               0x10
+#define INFO_LOG                0x100
+#define WARNING_LOG             0x1000
+#define ERROR_LOG               0x10000
+
+#define IS_LOGGING(scope)       ( (scope >= g_imx50_log_mask) )
 #define BITSOF(x)               ( 8 * sizeof(x) )
 #define BSWAP16(x)              ( (x >> 8) | (x << 8) )
 #define BSWAP32(x)              ( (x >> 24) | ((x << 8) & 0x00FF0000) | ((x >> 8 ) & 0x0000FF00) | (x << 24) )
 #define BSWAP64(x)              ( (x >> 56) | ((x<<40) & 0x00FF000000000000) | ((x<<24) & 0x0000FF0000000000) | ((x<<8) & 0x000000FF00000000) | ((x>>8) & 0x00000000FF000000) | ((x>>24) & 0x0000000000FF0000) | ((x>>40) & 0x000000000000FF00) | (ull << 56) )
 
-// all fields are big-endian, convert before sending
-struct sdp {
-    unsigned char report_number;
-    unsigned short command_type;
-    unsigned int address;
-    unsigned char format;
-    unsigned int data_count;
-    unsigned int data;
-    unsigned char reserved;
-};
+// win32 has stupid export requirements
+#ifdef _WIN32
+      #define IMX50USB_EXPORT __declspec(dllexport)
+#else
+      #define IMX50USB_EXPORT
+#endif
 
-// all fields are big-endian, convert before sending
-struct dcd {
-    unsigned int data_format;
-    unsigned int address;
-    unsigned int value;
-};
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-struct ivt {
-    unsigned int header;
-    unsigned int entry_address;
-    unsigned int reserved1;
-    unsigned int dcd_address;
-    unsigned int boot_data_address;
-    unsigned int self_address;
-    unsigned int csf_address;
-    unsigned int reserved2;
-};
+    // all fields are big-endian, convert before sending
+    struct sdp {
+        unsigned char report_number;
+        unsigned short command_type;
+        unsigned int address;
+        unsigned char format;
+        unsigned int data_count;
+        unsigned int data;
+        unsigned char reserved;
+    };
 
-struct boot_data {
-    unsigned int start_address;
-    unsigned int size;
-    unsigned int plugin_flag;
-};
+    // all fields are big-endian, convert before sending
+    struct dcd {
+        unsigned int data_format;
+        unsigned int address;
+        unsigned int value;
+    };
 
-// abstration for hid_device
-struct imx50_device;
+    struct ivt {
+        unsigned int header;
+        unsigned int entry_address;
+        unsigned int reserved1;
+        unsigned int dcd_address;
+        unsigned int boot_data_address;
+        unsigned int self_address;
+        unsigned int csf_address;
+        unsigned int reserved2;
+    };
 
-typedef struct sdp sdp_t;
-typedef struct dcd dcd_t;
-typedef struct ivt ivt_t;
-typedef struct boot_data boot_data_t;
-typedef struct imx50_device imx50_device_t;
+    struct boot_data {
+        unsigned int start_address;
+        unsigned int size;
+        unsigned int plugin_flag;
+    };
 
-// helper functions (hidden to user)
-//unsigned char *imx50_pack_command(sdp_t *command);
+    // abstration for hid_device
+    struct imx50_device;
 
-// device`management
-imx50_device_t *imx50_init_device();
-void imx50_close_device(imx50_device_t *device);
+    typedef struct sdp sdp_t;
+    typedef struct dcd dcd_t;
+    typedef struct ivt ivt_t;
+    typedef struct boot_data boot_data_t;
+    typedef struct imx50_device imx50_device_t;
 
-// reports
-int imx50_send_command(imx50_device_t *device, sdp_t *command);
-int imx50_send_data(imx50_device_t *device, unsigned char *payload, unsigned int size);
-int imx50_get_hab_type(imx50_device_t *device);
-int imx50_get_dev_ack(imx50_device_t *device, unsigned char **payload_p, unsigned int *size_p);
+    // helper functions (hidden to user)
+    //unsigned char *imx50_pack_command(sdp_t *command);
 
-// device commands
-int imx50_read_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count);
-int imx50_write_register(imx50_device_t *device, unsigned int address, unsigned int data);
-int imx50_write_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count);
-int imx50_error_status(imx50_device_t *device);
-int imx50_dcd_write(imx50_device_t *device, dcd_t *buffer, unsigned int count);
-int imx50_jump(imx50_device_t *device, unsigned int address);
+    // device`management
+    IMX50USB_EXPORT imx50_device_t *imx50_init_device();
+    IMX50USB_EXPORT void imx50_close_device(imx50_device_t *device);
 
-// abstractions
-int imx50_load_file(imx50_device_t *device, unsigned int address, const char *filename);
-int imx50_init_memory(imx50_device_t *device);
+    // other
+    IMX50USB_EXPORT void imx50_log_level(int log_mask);
 
+    // reports
+    IMX50USB_EXPORT int imx50_send_command(imx50_device_t *device, sdp_t *command);
+    IMX50USB_EXPORT int imx50_send_data(imx50_device_t *device, unsigned char *payload, unsigned int size);
+    IMX50USB_EXPORT int imx50_get_hab_type(imx50_device_t *device);
+    IMX50USB_EXPORT int imx50_get_dev_ack(imx50_device_t *device, unsigned char **payload_p, unsigned int *size_p);
+
+    // device commands
+    IMX50USB_EXPORT int imx50_read_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count);
+    IMX50USB_EXPORT int imx50_write_register(imx50_device_t *device, unsigned int address, unsigned int data);
+    IMX50USB_EXPORT int imx50_write_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count);
+    IMX50USB_EXPORT int imx50_error_status(imx50_device_t *device);
+    IMX50USB_EXPORT int imx50_dcd_write(imx50_device_t *device, dcd_t *buffer, unsigned int count);
+    IMX50USB_EXPORT int imx50_jump(imx50_device_t *device, unsigned int address);
+
+    // abstractions
+    IMX50USB_EXPORT int imx50_load_file(imx50_device_t *device, unsigned int address, const char *filename);
+    IMX50USB_EXPORT int imx50_init_memory(imx50_device_t *device);
+
+    #endif
+
+#ifdef __cplusplus
+}
 #endif

@@ -1,28 +1,42 @@
 //
-//  main.c
-//  iMXUSBTool
+//  iMX50 USB Tool
 //
-//  Created by Yifan Lu on 5/28/12.
-//  Copyright (c) 2012 __MyCompanyName__. All rights reserved.
+//  Created by Yifan Lu
+//  This program is free software: you can redistribute it and/or modify
+//  it under the terms of the GNU General Public License as published by
+//  the Free Software Foundation, either version 3 of the License, or
+//  (at your option) any later version.
+//  
+//  This program is distributed in the hope that it will be useful,
+//  but WITHOUT ANY WARRANTY; without even the implied warranty of
+//  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//  GNU General Public License for more details.
+//  
+//  You should have received a copy of the GNU General Public License
+//  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
 
 #include <stdio.h>
-#include "hidapi.h"
 #include "imxusb.h"
 
-int main(int argc, const char * argv[])
-{
-    printf("%s\n", "Waiting for device...");
-    hid_device *handle = imx50_get_device();
-    printf("%s\n", "Found device.");
-    char *data;
+int main(int argc, const char * argv[]) {
+    imx50_device_t *handle;
+    unsigned char data[500];
+
+    imx50_log_level(DEBUG_LOG);
+
+    fprintf(stderr, "%s\n", "Waiting for device...");
+    handle = imx50_init_device();
+    fprintf(stderr, "%s\n", "Found device.");
+
+    fprintf(stderr, "%s\n", "Set up memory.");
+    imx50_init_memory(handle);
     
-    imx50_read_register(handle, 0, BITSOF(int), 500, (char**)&data);
+    fprintf(stderr, "%s\n", "Attempting to read 500 bytes from 0x0.");
+    imx50_read_memory(handle, 0x0, data, 500);
     
-    for (int i = 0; i < 500; i++)
-		printf("%02hhx ", data[i]);
-	printf("\n");
-    
+    fprintf(stderr, "%s\n", "Closing device.");
+    imx50_close_device(handle);
     return 0;
 }
 
