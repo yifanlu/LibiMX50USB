@@ -527,7 +527,7 @@ IMX50USB_EXPORT int imx50_error_status(imx50_device_t *device) {
     
     memset(&sdpCmd, 0, sizeof(sdp_t)); // resets the struct 
     sdpCmd.report_number = REPORT_ID_SDP_CMD;
-    sdpCmd.command_type = CMD_WRITE_FILE;
+    sdpCmd.command_type = CMD_ERROR_STATUS;
     
     if(imx50_send_command(device, &sdpCmd) != 0) {
         if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Cannot send command [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
