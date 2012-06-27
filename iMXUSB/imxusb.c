@@ -27,7 +27,7 @@
 #include <string.h>
 #include <unistd.h>
 // function macros
-#define SLEEP(x) sleep(x)
+#define SLEEP(x) usleep(x * 1000)
 #define TRACE(msg...) \
     (fprintf(stderr, msg))
 #else
@@ -403,11 +403,12 @@ IMX50USB_EXPORT int imx50_read_memory(imx50_device_t *device, unsigned int addre
     
     @param device the HID device to write to.
     @param address Where to write in memory
-    @param data A byte of data to write
+    @param data The data to write
+    @param format How many bits in data to write 
     
     @return Zero on success, error code otherwise
 **/
-IMX50USB_EXPORT int imx50_write_register(imx50_device_t *device, unsigned int address, unsigned int data) {
+IMX50USB_EXPORT int imx50_write_register(imx50_device_t *device, unsigned int address, unsigned int data, unsigned char format) {
     sdp_t sdpCmd;
     unsigned int *status_p;
     unsigned int status;
@@ -417,7 +418,7 @@ IMX50USB_EXPORT int imx50_write_register(imx50_device_t *device, unsigned int ad
     sdpCmd.report_number = REPORT_ID_SDP_CMD;
     sdpCmd.command_type = CMD_WRITE_REGISTER;
     sdpCmd.address = address;
-    sdpCmd.format = BITSOF(int); // 32-bits = one byte
+    sdpCmd.format = format; // 32-bits = one byte
     sdpCmd.data_count = 1;
     sdpCmd.data = data;
     
@@ -565,6 +566,7 @@ IMX50USB_EXPORT int imx50_dcd_write(imx50_device_t *device, dcd_t *buffer, unsig
     unsigned int size;
     unsigned char *payload;
     unsigned int *status_p;
+    unsigned int status_size;
     unsigned int status;
     
     memset(&sdpCmd, 0, sizeof(sdp_t)); // resets the struct 
@@ -604,7 +606,7 @@ IMX50USB_EXPORT int imx50_dcd_write(imx50_device_t *device, dcd_t *buffer, unsig
             return ERROR_RETURN;
         }
         
-        if(imx50_get_dev_ack(device, (unsigned char**)&status_p, &size) < 0) {
+        if(imx50_get_dev_ack(device, (unsigned char**)&status_p, &status_size) < 0) {
             if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error recieving response [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
             return ERROR_READ;
         }
@@ -616,7 +618,7 @@ IMX50USB_EXPORT int imx50_dcd_write(imx50_device_t *device, dcd_t *buffer, unsig
             return ERROR_WRITE;
         }
         
-        buffer += size;
+        buffer = (dcd_t*)((unsigned char*)buffer + size); // add in bytes
         count -= sdpCmd.data_count;
     }
     
@@ -754,65 +756,130 @@ IMX50USB_EXPORT int imx50_load_file(imx50_device_t *device, unsigned int address
 }
 
 /**
-    @brief Sets up the device's external memory
+    @brief Sets up an Amazon Kindle's DDR RAM
     
     iMX50 devices, on startup, must be set up before 
-    the entire DDR RAM can be accessed. Before set up, 
-    you can only read/write the iMX50 internal memory.
-    The device is set up using imx50_dcd_write() with 
-    pre-coded DCD members. Experts can set up the RAM 
-    manually using that function.
+    the entire external RAM can be accessed. Before set 
+    up, you can only read/write the iMX50 internal memory.
+    The device is programmed with pre-coded register 
+    values for Kindle Touch and Kindle 4.
     
-    @param device the HID device to set up
+    @param device the Kindle to set up
     
     @see imx50_dcd_write
-    @return imx50_dcd_write()'s return value
+    @return Zero on success, error code otherwise
 **/
-IMX50USB_EXPORT int imx50_init_memory(imx50_device_t *device) {
-    static dcd_t mx508_lpddr2_init[] = 
-    {
-        { 32, 0x53fd400c, 0x00000004 }, { 32, 0x63f80000, 0x00001232 }, { 32, 0x63f80004, 0x00000002 }, { 32, 0x63f80008, 0x00000080 }, { 32, 0x63f8001c, 0x00000080 }, 
-        { 32, 0x63f8000c, 0x00000002 }, { 32, 0x63f80020, 0x00000002 }, { 32, 0x63f80010, 0x00000001 }, { 32, 0x63f80024, 0x00000001 }, { 32, 0x63f80000, 0x00001232 }, 
-        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
-        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
-        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
-        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
-        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
-        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
-        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
-        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
-        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
-        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, 
-        { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fa86ac, 0x02000000 }, { 32, 0x53fd400c, 0x00000000 }, { 32, 0x53fd4068, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, 
-        { 32, 0x53fd4070, 0xffffffff }, { 32, 0x53fd4074, 0xffffffff }, { 32, 0x53fd4078, 0xffffffff }, { 32, 0x53fd407c, 0xffffffff }, { 32, 0x53fd4080, 0xffffffff }, 
-        { 32, 0x53fd4084, 0xffffffff }, { 32, 0x53FD4098, 0x80000003 }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, 
-        { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, 
-        { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, 
-        { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, 
-        { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, 
-        { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fd406c, 0xffffffff }, 
-        { 32, 0x53fd406c, 0xffffffff }, { 32, 0x53fa86ac, 0x04000000 }, { 32, 0x53fa86a4, 0x00180000 }, { 32, 0x53fa8668, 0x00180000 }, { 32, 0x53fa8698, 0x00180000 }, 
-        { 32, 0x53fa86a0, 0x00180000 }, { 32, 0x53fa86a8, 0x00180000 }, { 32, 0x53fa86b4, 0x00180000 }, { 32, 0x53fa8498, 0x00180000 }, { 32, 0x53fa849c, 0x00180000 }, 
-        { 32, 0x53fa84f0, 0x00180000 }, { 32, 0x53fa8500, 0x00180000 }, { 32, 0x53fa84c8, 0x00180000 }, { 32, 0x53fa8528, 0x00180000 }, { 32, 0x53fa84f4, 0x00180000 }, 
-        { 32, 0x53fa84fc, 0x00180000 }, { 32, 0x53fa84cc, 0x00180000 }, { 32, 0x53fa8524, 0x00180000 }, { 32, 0x14000128, 0x08170101 }, { 32, 0x14000128, 0x00000000 }, 
-        { 32, 0x14000128, 0x08170111 }, { 32, 0x14000128, 0x00000000 }, { 32, 0x14000000, 0x00000500 }, { 32, 0x14000004, 0x00000000 }, { 32, 0x14000008, 0x0000001b }, 
-        { 32, 0x1400000c, 0x0000d056 }, { 32, 0x14000010, 0x0000010b }, { 32, 0x14000014, 0x00000a6b }, { 32, 0x14000018, 0x02030d0c }, { 32, 0x1400001c, 0x0c110304 }, 
-        { 32, 0x14000020, 0x05020503 }, { 32, 0x14000024, 0x0048eb05 }, { 32, 0x14000028, 0x01000403 }, { 32, 0x1400002c, 0x09040501 }, { 32, 0x14000030, 0x02000000 }, 
-        { 32, 0x14000034, 0x00000e02 }, { 32, 0x14000038, 0x00000006 }, { 32, 0x1400003c, 0x00002301 }, { 32, 0x14000040, 0x00050300 }, { 32, 0x14000044, 0x00000300 }, 
-        { 32, 0x14000048, 0x00260026 }, { 32, 0x1400004c, 0x00010000 }, { 32, 0x1400005c, 0x02000000 }, { 32, 0x14000060, 0x00000002 }, { 32, 0x14000064, 0x00000000 }, 
-        { 32, 0x14000068, 0x00000000 }, { 32, 0x1400006c, 0x00040042 }, { 32, 0x14000070, 0x00000001 }, { 32, 0x14000074, 0x00000000 }, { 32, 0x14000078, 0x00040042 }, 
-        { 32, 0x1400007c, 0x00000001 }, { 32, 0x14000080, 0x010b0000 }, { 32, 0x14000084, 0x00000060 }, { 32, 0x14000088, 0x02400018 }, { 32, 0x1400008c, 0x01000e00 }, 
-        { 32, 0x14000090, 0x0a010101 }, { 32, 0x14000094, 0x01011f1f }, { 32, 0x14000098, 0x01010101 }, { 32, 0x1400009c, 0x00030101 }, { 32, 0x140000a0, 0x00010000 }, 
-        { 32, 0x140000a4, 0x00010000 }, { 32, 0x140000a8, 0x00000000 }, { 32, 0x140000ac, 0x0000ffff }, { 32, 0x140000c8, 0x02020101 }, { 32, 0x140000cc, 0x01000000 }, 
-        { 32, 0x140000d0, 0x01000201 }, { 32, 0x140000d4, 0x00000200 }, { 32, 0x140000d8, 0x00000102 }, { 32, 0x140000dc, 0x0003ffff }, { 32, 0x140000e0, 0x0000ffff }, 
-        { 32, 0x140000e4, 0x02020000 }, { 32, 0x140000e8, 0x02020202 }, { 32, 0x140000ec, 0x00000202 }, { 32, 0x140000f0, 0x01010064 }, { 32, 0x140000f4, 0x01010101 }, 
-        { 32, 0x140000f8, 0x00010101 }, { 32, 0x140000fc, 0x00000064 }, { 32, 0x14000100, 0x00000000 }, { 32, 0x14000104, 0x02000802 }, { 32, 0x14000108, 0x04080000 }, 
-        { 32, 0x1400010c, 0x04080408 }, { 32, 0x14000110, 0x04080408 }, { 32, 0x14000114, 0x03060408 }, { 32, 0x14000118, 0x01010002 }, { 32, 0x1400011c, 0x00000000 }, 
-        { 32, 0x14000200, 0x00000000 }, { 32, 0x14000204, 0x00000000 }, { 32, 0x14000208, 0xf5003a27 }, { 32, 0x14000210, 0xf5003a27 }, { 32, 0x14000218, 0xf5003a27 }, 
-        { 32, 0x14000220, 0xf5003a27 }, { 32, 0x14000228, 0xf5003a27 }, { 32, 0x1400020c, 0x074002e1 }, { 32, 0x14000214, 0x074002e1 }, { 32, 0x1400021c, 0x074002e1 }, 
-        { 32, 0x14000224, 0x074002e1 }, { 32, 0x1400022c, 0x074002e1 }, { 32, 0x14000230, 0x00000000 }, { 32, 0x14000234, 0x00810006 }, { 32, 0x14000238, 0x60099414 }, 
-        { 32, 0x14000240, 0x60099414 }, { 32, 0x14000248, 0x60099414 }, { 32, 0x14000250, 0x60099414 }, { 32, 0x14000258, 0x60099414 }, { 32, 0x1400023c, 0x000a1401 }, 
-        { 32, 0x14000244, 0x000a1401 }, { 32, 0x1400024c, 0x000a1401 }, { 32, 0x14000254, 0x000a1401 }, { 32, 0x1400025c, 0x000a1401 }, { 32, 0x14000000, 0x00000501 }
-    };
-    return imx50_dcd_write(device, mx508_lpddr2_init, sizeof(mx508_lpddr2_init) / sizeof(dcd_t));
+IMX50USB_EXPORT int imx50_kindle_init(imx50_device_t *device) {
+    static dcd_t setup_pll1_1[] = 
+        {
+            { 32, 0x53FD400C, 0x4 }, // Switch ARM domain to be clocked from LP-APM
+            { 32, 0x63F80004, 0x0 }, // disable auto-restart AREN bit
+            { 32, 0x63F80008, 0x80 }, { 32, 0x63F8001C, 0x80 }, // clock PLL1
+            { 32, 0x63F80010, 0xB4 }, { 32, 0x63F80024, 0xB4 }, // MFN = 180
+            { 32, 0x63F8000C, 0xB3 }, { 32, 0x63F80020, 0xB3 }, // MFD = 179
+            { 32, 0x63F80000, 0x00001236 } // Set PLM =1, manual restart and enable PLL
+        };
+
+    static dcd_t setup_pll1_2[] = 
+        {
+            { 32, 0x63F80010, 0x3C }, { 32, 0x63F80024, 0x3C }, // set PLL1 to 800Mhz
+            { 32, 0x63F80004, 0x1 } // Set the LDREQ bit
+        };
+
+    static dcd_t enable_clocks[] = 
+        {
+            { 32, 0x53FD4068, 0xffffffff }, { 32, 0x53FD406c, 0xffffffff }, { 32, 0x53FD4070, 0xffffffff }, { 32, 0x53FD4074, 0xffffffff }, 
+            { 32, 0x53FD4078, 0xffffffff }, { 32, 0x53FD407c, 0xffffffff }, { 32, 0x53FD4080, 0xffffffff }, { 32, 0x53FD4084, 0xffffffff }
+        };
+    static dcd_t lpddr1_init[] = 
+        {
+            // IOMUX
+            { 32, 0x53fa86AC, 0x0 }, { 32, 0x53fa866C, 0x0 }, { 32, 0x53fa868C, 0x0 }, { 32, 0x53fa8670, 0x0 }, 
+            { 32, 0x53fa86A4, 0x00180000 }, { 32, 0x53fa8668, 0x00180000 }, { 32, 0x53fa8698, 0x00180000 }, { 32, 0x53fa86A0, 0x00180000 }, 
+            { 32, 0x53fa86A8, 0x00180000 }, { 32, 0x53fa86B4, 0x00180000 }, { 32, 0x53fa8490, 0x00180000 }, { 32, 0x53fa8494, 0x00180000 }, 
+            { 32, 0x53fa8498, 0x00180000 }, { 32, 0x53fa849c, 0x00180000 }, { 32, 0x53fa84f0, 0x00180000 }, { 32, 0x53fa8500, 0x00180000 }, 
+            { 32, 0x53fa84c8, 0x00180000 }, { 32, 0x53fa8528, 0x00180080 }, { 32, 0x53fa84f4, 0x00180080 }, { 32, 0x53fa84fc, 0x00180080 }, 
+            { 32, 0x53fa84cc, 0x00180080 }, { 32, 0x53fa8524, 0x00180080 }, 
+            // Static ZQ calibration
+            { 32, 0x1400012C, 0x00000408 }, { 32, 0x14000128, 0x05090000 }, { 32, 0x14000124, 0x00310000 }, { 32, 0x14000124, 0x00200000 }, 
+            { 32, 0x14000128, 0x05090010 }, { 32, 0x14000124, 0x00310000 }, { 32, 0x14000124, 0x00200000 }, 
+            // DDR Controller registers
+            { 32, 0x14000000, 0x00000100 }, { 32, 0x14000008, 0x00009c40 }, { 32, 0x1400000C, 0x00000000 }, { 32, 0x14000010, 0x00000000 }, 
+            { 32, 0x14000014, 0x20000000 }, { 32, 0x14000018, 0x01010006 }, { 32, 0x1400001c, 0x080b0201 }, { 32, 0x14000020, 0x02000303 }, 
+            { 32, 0x14000024, 0x0036b002 }, { 32, 0x14000028, 0x00000606 }, { 32, 0x1400002c, 0x06030400 }, { 32, 0x14000030, 0x01000000 }, 
+            { 32, 0x14000034, 0x00000a02 }, { 32, 0x14000038, 0x00000003 }, { 32, 0x1400003c, 0x00001801 }, { 32, 0x14000040, 0x00050612 }, 
+            { 32, 0x14000044, 0x00000200 }, { 32, 0x14000048, 0x001c001c }, { 32, 0x1400004c, 0x00010000 }, { 32, 0x1400005c, 0x01000000 }, 
+            { 32, 0x14000060, 0x00000001 }, { 32, 0x14000064, 0x00000000 }, { 32, 0x14000068, 0x00320000 }, { 32, 0x1400006c, 0x00000000 }, 
+            { 32, 0x14000070, 0x00000000 }, { 32, 0x14000074, 0x00320000 }, { 32, 0x14000080, 0x02000000 }, { 32, 0x14000084, 0x00000100 }, 
+            { 32, 0x14000088, 0x02400040 }, { 32, 0x1400008c, 0x01000000 }, { 32, 0x14000090, 0x0a000100 }, { 32, 0x14000094, 0x01011f1f }, 
+            { 32, 0x14000098, 0x01010101 }, { 32, 0x1400009c, 0x00030101 }, { 32, 0x140000a4, 0x00010000 }, { 32, 0x140000ac, 0x0000ffff }, 
+            { 32, 0x140000c8, 0x02020101 }, { 32, 0x140000cc, 0x00000000 }, { 32, 0x140000d0, 0x01000202 }, { 32, 0x140000d4, 0x00000200 }, 
+            { 32, 0x140000d8, 0x00000001 }, { 32, 0x140000dc, 0x0000ffff }, { 32, 0x140000e4, 0x02020000 }, { 32, 0x140000e8, 0x02020202 }, 
+            { 32, 0x140000ec, 0x00000202 }, { 32, 0x140000f0, 0x01010064 }, { 32, 0x140000f4, 0x01010101 }, { 32, 0x140000f8, 0x00010101 }, 
+            { 32, 0x140000fc, 0x00000064 }, { 32, 0x14000104, 0x02000602 }, { 32, 0x14000108, 0x06120000 }, { 32, 0x1400010c, 0x06120612 }, 
+            { 32, 0x14000110, 0x06120612 }, { 32, 0x14000114, 0x01030612 }, { 32, 0x14000118, 0x00010002 }, { 32, 0x1400011C, 0x00001000 }, 
+            // DDR PHY setting
+            { 32, 0x14000200, 0x00000000 }, { 32, 0x14000204, 0x00000000 }, { 32, 0x14000208, 0x35002725 }, { 32, 0x14000210, 0x35002725 }, 
+            { 32, 0x14000218, 0x35002725 }, { 32, 0x14000220, 0x35002725 }, { 32, 0x14000228, 0x35002725 }, { 32, 0x1400020c, 0x380002d0 }, 
+            { 32, 0x14000214, 0x380002d0 }, { 32, 0x1400021c, 0x380002d0 }, { 32, 0x14000224, 0x380002d0 }, { 32, 0x1400022c, 0x380002d0 }, 
+            { 32, 0x14000230, 0x00000000 }, { 32, 0x14000234, 0x00800006 }, { 32, 0x14000238, 0x60101414 }, { 32, 0x14000240, 0x60101414 }, 
+            { 32, 0x14000248, 0x60101414 }, { 32, 0x14000250, 0x60101414 }, { 32, 0x14000258, 0x60101414 }, { 32, 0x1400023c, 0x00101001 }, 
+            { 32, 0x14000244, 0x00101001 }, { 32, 0x1400024c, 0x00101001 }, { 32, 0x14000254, 0x00101001 }, { 32, 0x1400025c, 0x00102201 }
+        };
+
+    /* Setup PLL1 to be 800 MHz */
+    if(imx50_dcd_write(device, setup_pll1_1, sizeof(setup_pll1_1) / sizeof(dcd_t)) != 0){
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error writing registers [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
+        return ERROR_WRITE;
+    }
+    // Wait PLL1 lock
+    SLEEP(10);
+
+    if(imx50_dcd_write(device, setup_pll1_2, sizeof(setup_pll1_2) / sizeof(dcd_t)) != 0){
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error writing registers [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
+        return ERROR_WRITE;
+    }
+
+    // Wait for MFN update to be completed
+    SLEEP(10);
+
+    // Switch ARM back to PLL1
+    if(imx50_write_register(device, 0x53FD400C, 0x0, BITSOF(int)) != 0){
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error writing registers [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
+        return ERROR_WRITE;
+    }
+
+    // Enable all clocks (they are disabled by ROM code)
+    if(imx50_dcd_write(device, enable_clocks, sizeof(enable_clocks) / sizeof(dcd_t)) != 0){
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error writing registers [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
+        return ERROR_WRITE;
+    }
+
+    /* Set up LPDDR1-MDDR RAM */
+
+    // Set DDR to be div 4 to get 200MHz
+    if(imx50_write_register(device, 0x53FD4098, 0x80000004, BITSOF(int)) != 0){
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error writing registers [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
+        return ERROR_WRITE;
+    }
+
+    // wait for DDR dividers take effect
+    SLEEP(10);
+
+    // set up RAM
+    if(imx50_dcd_write(device, lpddr1_init, sizeof(lpddr1_init) / sizeof(dcd_t)) != 0){
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error writing registers [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
+        return ERROR_WRITE;
+    }
+
+    // Start ddr
+    if(imx50_write_register(device, 0x14000000, 0x00000101, BITSOF(int)) != 0){
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error writing registers [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
+        return ERROR_WRITE;
+    }
+
+    // Make sure it's started
+    SLEEP(10);
+
+    return 0;
 }

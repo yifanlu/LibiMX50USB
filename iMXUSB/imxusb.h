@@ -50,6 +50,9 @@
 #define REPORT_HAB_MODE_SIZE    5
 #define REPORT_STATUS_SIZE      65
 
+#define UNK1                    0x33333333
+#define UNK2                    0xF0F0F0F0
+
 #define ERROR_OUT_OF_MEMORY     -1
 #define ERROR_IO                -2
 #define ERROR_WRITE             -3
@@ -144,7 +147,7 @@ extern "C" {
 
     // device commands
     IMX50USB_EXPORT int imx50_read_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count);
-    IMX50USB_EXPORT int imx50_write_register(imx50_device_t *device, unsigned int address, unsigned int data);
+    IMX50USB_EXPORT int imx50_write_register(imx50_device_t *device, unsigned int address, unsigned int data, unsigned char format);
     IMX50USB_EXPORT int imx50_write_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count);
     IMX50USB_EXPORT int imx50_error_status(imx50_device_t *device);
     IMX50USB_EXPORT int imx50_dcd_write(imx50_device_t *device, dcd_t *buffer, unsigned int count);
@@ -152,7 +155,7 @@ extern "C" {
 
     // abstractions
     IMX50USB_EXPORT int imx50_load_file(imx50_device_t *device, unsigned int address, const char *filename);
-    IMX50USB_EXPORT int imx50_init_memory(imx50_device_t *device);
+    IMX50USB_EXPORT int imx50_kindle_init(imx50_device_t *device);
 
     #endif
 
