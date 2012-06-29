@@ -17,7 +17,9 @@
 //
 
 #include <stdio.h>
-#include <windows.h>
+#ifdef _WIN32
+    #include <windows.h>
+#endif
 #include "imxusb.h"
 
 int main(int argc, const char * argv[]) {

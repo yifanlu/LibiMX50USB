@@ -21,28 +21,28 @@
 #include <stdio.h>
 
 #ifndef _WIN32
-// posix includes
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-// function macros
-#define SLEEP(x) usleep(x * 1000)
-#define TRACE(msg...) \
-    (fprintf(stderr, msg))
+    // posix includes
+    #include <stdint.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include <unistd.h>
+    // function macros
+    #define SLEEP(x) usleep(x * 1000)
+    #define TRACE(msg...) \
+        (fprintf(stderr, msg))
 #else
-// fixed width integers
-// unfortunally, VC++ lacks unsigned types
-typedef __int8 uint8_t;
-typedef __int16 uint16_t;
-typedef __int32 uint32_t;
-typedef __int64 uint64_t;
-// WinRT includes
-#include <windows.h>
-#include <memory.h>
-// function macros
-#define SLEEP(x) Sleep(x)
-#define TRACE printf
+    // fixed width integers
+    // unfortunally, VC++ lacks unsigned types
+    typedef __int8 uint8_t;
+    typedef __int16 uint16_t;
+    typedef __int32 uint32_t;
+    typedef __int64 uint64_t;
+    // WinRT includes
+    #include <windows.h>
+    #include <memory.h>
+    // function macros
+    #define SLEEP(x) Sleep(x)
+    #define TRACE printf
 #endif
 
 int g_imx50_log_mask = ERROR_LOG;
@@ -756,7 +756,7 @@ IMX50USB_EXPORT int imx50_load_file(imx50_device_t *device, unsigned int address
 }
 
 /**
-    @brief Sets up an Amazon Kindle's DDR RAM
+    @brief Sets up an Amazon Kindle's DRAM
     
     iMX50 devices, on startup, must be set up before 
     the entire external RAM can be accessed. Before set 

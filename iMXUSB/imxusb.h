@@ -50,8 +50,8 @@
 #define REPORT_HAB_MODE_SIZE    5
 #define REPORT_STATUS_SIZE      65
 
-#define UNK1                    0x33333333
-#define UNK2                    0xF0F0F0F0
+#define STATUS_CODE_OK          0xF0F0F0F0
+#define STATUS_CODE_UNK1        0x33333333
 
 #define ERROR_OUT_OF_MEMORY     -1
 #define ERROR_IO                -2
