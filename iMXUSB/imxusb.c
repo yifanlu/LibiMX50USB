@@ -358,7 +358,7 @@ IMX50USB_EXPORT int imx50_get_dev_ack(imx50_device_t *device, unsigned char **pa
     
     @return Zero on success, error code otherwise
 **/
-IMX50USB_EXPORT int imx50_read_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count) {
+IMX50USB_EXPORT int imx50_read_memory(imx50_device_t *device, device_addr_t address, unsigned char *buffer, unsigned int count) {
     sdp_t sdpCmd;
     unsigned int max_trans_size = REPORT_STATUS_SIZE - 1;
     unsigned int trans_size;
@@ -408,7 +408,7 @@ IMX50USB_EXPORT int imx50_read_memory(imx50_device_t *device, unsigned int addre
     
     @return Zero on success, error code otherwise
 **/
-IMX50USB_EXPORT int imx50_write_register(imx50_device_t *device, unsigned int address, unsigned int data, unsigned char format) {
+IMX50USB_EXPORT int imx50_write_register(imx50_device_t *device, device_addr_t address, unsigned int data, unsigned char format) {
     sdp_t sdpCmd;
     unsigned int *status_p;
     unsigned int status;
@@ -460,7 +460,7 @@ IMX50USB_EXPORT int imx50_write_register(imx50_device_t *device, unsigned int ad
     
     @return Zero on success, error code otherwise
 **/
-IMX50USB_EXPORT int imx50_write_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count) {
+IMX50USB_EXPORT int imx50_write_memory(imx50_device_t *device, device_addr_t address, unsigned char *buffer, unsigned int count) {
     sdp_t sdpCmd;
     unsigned int max_trans_size = REPORT_DATA_SIZE - 1;
     unsigned int trans_size;
@@ -631,13 +631,18 @@ IMX50USB_EXPORT int imx50_dcd_write(imx50_device_t *device, dcd_t *buffer, unsig
     Once this is called, the device will be unloaded and 
     will start executing instructions starting at the address.
     You must still free the device with imx50_free_device().
+ 
+    You can only jump to the start of an IVT header. If your 
+    code does not have an IVT header, call imx50_add_header() 
+    on the address of your code and jump to the value returned.
     
     @param device the HID device to write to
-    @param address The address to jump to
+    @param address The address of header to jump to
     
     @return Zero on success, error code, or status code from device
+    @see imx50_add_header
 **/
-IMX50USB_EXPORT int imx50_jump(imx50_device_t *device, unsigned int address) {
+IMX50USB_EXPORT int imx50_jump(imx50_device_t *device, device_addr_t address) {
     sdp_t sdpCmd;
     unsigned int *status_p;
     unsigned int status;
@@ -658,6 +663,7 @@ IMX50USB_EXPORT int imx50_jump(imx50_device_t *device, unsigned int address) {
         return ERROR_RETURN;
     }
     
+    /*
     if(imx50_get_dev_ack(device, (unsigned char**)&status_p, &size) < 0) {
         if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Error recieving response [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         return ERROR_READ;
@@ -668,6 +674,7 @@ IMX50USB_EXPORT int imx50_jump(imx50_device_t *device, unsigned int address) {
         if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Return status not zero, got: %#08X [%s:%d]\n", __FUNCTION__, status, __FILE__, __LINE__);
         return status; // error occured
     }
+     */
     
     return 0;
 }
@@ -685,10 +692,10 @@ IMX50USB_EXPORT int imx50_jump(imx50_device_t *device, unsigned int address) {
     @see imx50_write_memory
     @return Zero on success, error code otherwise
 **/
-IMX50USB_EXPORT int imx50_load_file(imx50_device_t *device, unsigned int address, const char *filename) {
+IMX50USB_EXPORT int imx50_load_file(imx50_device_t *device, device_addr_t address, const char *filename) {
     unsigned int size;
-    unsigned int offset = 0;
-    unsigned int trans_size = 0;
+    unsigned int offset;
+    unsigned int trans_size;
     unsigned char buffer[MAX_DOWNLOAD_SIZE];
 #ifdef _WIN32 //win32 code
     HANDLE hFile = CreateFile(filename, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -715,7 +722,7 @@ IMX50USB_EXPORT int imx50_load_file(imx50_device_t *device, unsigned int address
     fseek(fp, 0L, SEEK_SET); // reset fp
 #endif
     
-    for(; offset < size; offset += trans_size) {
+    for(offset = 0, trans_size = 0; offset < size; offset += trans_size) {
         trans_size = size - offset;
         if(trans_size > MAX_DOWNLOAD_SIZE){
             trans_size = MAX_DOWNLOAD_SIZE;
@@ -753,6 +760,66 @@ IMX50USB_EXPORT int imx50_load_file(imx50_device_t *device, unsigned int address
 #endif
     
     return offset >= size ? 0 : ERROR_WRITE; // did the loop complete?
+}
+
+/**
+    @brief Adds header to code for executing
+ 
+    Code that is to be executed must contain an IVT 
+    header. This function takes the address of the 
+    code to run, inserts an IVT header, and returns 
+    the address of the header.
+    Be aware that the 32 bytes before "address" will 
+    be overwritten.
+ 
+    @param device the HID device
+    @param address location of executable code
+ 
+    @return Zero on error, address of header otherwise
+ **/
+IMX50USB_EXPORT device_addr_t imx50_add_header(imx50_device_t *device, device_addr_t address) {
+    device_addr_t flash_header_address;
+    unsigned char flash_header[ROM_TRANSFER_SIZE] = { 0 };
+    unsigned char temp_buffer[ROM_TRANSFER_SIZE] = { 0 };
+    ivt_t *ivt_header = (ivt_t*)flash_header;
+    
+    // add the header before the code
+    flash_header_address = address - sizeof(ivt_t);
+    
+    // read the data to add header to
+    if(imx50_read_memory(device, flash_header_address, flash_header, ROM_TRANSFER_SIZE) != 0){
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Cannot read memory at %#X [%s:%d]\n", __FUNCTION__, flash_header_address, __FILE__, __LINE__);
+        return 0;
+    }
+    
+    // zero out the header
+    memset(flash_header, 0, sizeof(ivt_t));
+    
+    // set the header parameters
+    ivt_header->header = IVT_BARKER_HEADER;
+    ivt_header->entry_address = address;
+    ivt_header->self_address = flash_header_address;
+    
+    // send the data + new header
+    if(imx50_write_memory(device, flash_header_address, flash_header, ROM_TRANSFER_SIZE) != 0){
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Cannot write header back at %#X [%s:%d]\n", __FUNCTION__, flash_header_address, __FILE__, __LINE__);
+        return 0;
+    }
+    
+    // check to see if everything is written correctly
+    if(imx50_read_memory(device, flash_header_address, temp_buffer, ROM_TRANSFER_SIZE) != 0){
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Cannot reader header back at %#X [%s:%d]\n", __FUNCTION__, flash_header_address, __FILE__, __LINE__);
+        return 0;
+    }
+    
+    // compare what we wrote to what is written
+    if(memcmp(flash_header, temp_buffer, ROM_TRANSFER_SIZE) != 0){
+        if(IS_LOGGING(ERROR_LOG)) TRACE("[%s] E:Data written is corrupted [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
+        return 0;
+    }
+    
+    // if all works, return the address of the header
+    return flash_header_address;
 }
 
 /**

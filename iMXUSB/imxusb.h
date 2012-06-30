@@ -62,6 +62,7 @@
 #define ERROR_RETURN            -7
 
 #define IVT_BARKER_HEADER       0x402000D1
+#define ROM_TRANSFER_SIZE       0x400
 
 #define DEBUG_LOG               0x10
 #define INFO_LOG                0x100
@@ -84,12 +85,14 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
+    // so we don't get confused with device's memory address vs pc's memory address
+    typedef unsigned int device_addr_t;
+    
     // all fields are big-endian, convert before sending
     struct sdp {
         unsigned char report_number;
         unsigned short command_type;
-        unsigned int address;
+        device_addr_t address;
         unsigned char format;
         unsigned int data_count;
         unsigned int data;
@@ -99,23 +102,23 @@ extern "C" {
     // all fields are big-endian, convert before sending
     struct dcd {
         unsigned int data_format;
-        unsigned int address;
+        device_addr_t address;
         unsigned int value;
     };
 
     struct ivt {
         unsigned int header;
-        unsigned int entry_address;
+        device_addr_t entry_address;
         unsigned int reserved1;
-        unsigned int dcd_address;
-        unsigned int boot_data_address;
-        unsigned int self_address;
-        unsigned int csf_address;
+        device_addr_t dcd_address;
+        device_addr_t boot_data_address;
+        device_addr_t self_address;
+        device_addr_t csf_address;
         unsigned int reserved2;
     };
 
     struct boot_data {
-        unsigned int start_address;
+        device_addr_t start_address;
         unsigned int size;
         unsigned int plugin_flag;
     };
@@ -146,15 +149,16 @@ extern "C" {
     IMX50USB_EXPORT int imx50_get_dev_ack(imx50_device_t *device, unsigned char **payload_p, unsigned int *size_p);
 
     // device commands
-    IMX50USB_EXPORT int imx50_read_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count);
-    IMX50USB_EXPORT int imx50_write_register(imx50_device_t *device, unsigned int address, unsigned int data, unsigned char format);
-    IMX50USB_EXPORT int imx50_write_memory(imx50_device_t *device, unsigned int address, unsigned char *buffer, unsigned int count);
+    IMX50USB_EXPORT int imx50_read_memory(imx50_device_t *device, device_addr_t address, unsigned char *buffer, unsigned int count);
+    IMX50USB_EXPORT int imx50_write_register(imx50_device_t *device, device_addr_t address, unsigned int data, unsigned char format);
+    IMX50USB_EXPORT int imx50_write_memory(imx50_device_t *device, device_addr_t address, unsigned char *buffer, unsigned int count);
     IMX50USB_EXPORT int imx50_error_status(imx50_device_t *device);
     IMX50USB_EXPORT int imx50_dcd_write(imx50_device_t *device, dcd_t *buffer, unsigned int count);
-    IMX50USB_EXPORT int imx50_jump(imx50_device_t *device, unsigned int address);
+    IMX50USB_EXPORT int imx50_jump(imx50_device_t *device, device_addr_t address);
 
     // abstractions
-    IMX50USB_EXPORT int imx50_load_file(imx50_device_t *device, unsigned int address, const char *filename);
+    IMX50USB_EXPORT device_addr_t imx50_add_header(imx50_device_t *device, device_addr_t address);
+    IMX50USB_EXPORT int imx50_load_file(imx50_device_t *device, device_addr_t address, const char *filename);
     IMX50USB_EXPORT int imx50_kindle_init(imx50_device_t *device);
 
     #endif

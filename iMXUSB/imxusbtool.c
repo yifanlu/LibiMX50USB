@@ -19,6 +19,9 @@
 #include <stdio.h>
 #ifdef _WIN32
     #include <windows.h>
+#else
+    #include <stdio.h>
+    #include <string.h>
 #endif
 #include "imxusb.h"
 
@@ -27,6 +30,7 @@ int main(int argc, const char * argv[]) {
     unsigned char data[500];
     unsigned const char *payload = "abcdefghijklmnopqrstuvwxyz";
     unsigned int value = 0xdeadbeef;
+    device_addr_t header_addr;
 
     imx50_log_level(DEBUG_LOG);
     handle = imx50_init_device();
@@ -35,13 +39,23 @@ int main(int argc, const char * argv[]) {
         return 1;
     }
 
-    fprintf(stderr, "%s\n", "!!! Writing memory");
-    imx50_write_memory(handle, 0x70800000, payload, strlen(payload));
-    fprintf(stderr, "!!! device status: %X\n", imx50_error_status(handle));
-
-    fprintf(stderr, "%s\n", "!!! Reading memory");
-    imx50_read_memory(handle, 0x70800000, data, strlen(payload));
-    fprintf(stderr, "!!! device status: %X\n", imx50_error_status(handle));
+    //fprintf(stderr, "%s\n", "!!! Writing memory");
+    //imx50_write_memory(handle, 0x70800000, payload, strlen(payload));
+    //fprintf(stderr, "!!! device status: %X\n", imx50_error_status(handle));
+    
+    imx50_load_file(handle, 0x70800000, "/Users/yifanlu/Downloads/kindle_recovery/uImage");
+    imx50_load_file(handle, 0x7e000000, "/Users/yifanlu/Downloads/kindle_recovery/kinitrd.img.gz");
+    //imx50_write_memory(handle, 0x70800000, payload, strlen(payload));
+    //imx50_load_file(handle, 0xF8006000, "/Users/yifanlu/Downloads/kindle_recovery/u-boot-plugin.bin");
+    //imx50_jump(handle, 0xF8006400);
+    //imx50_load_file(handle, 0xF8007000, "/Users/yifanlu/Downloads/kindle_recovery/u-boot.bin");
+    imx50_load_file(handle, 0x79800000, "/Users/yifanlu/Downloads/kindle_recovery/u-boot-bist-noheader.bin");
+    header_addr = imx50_add_header(handle, 0x79800000);
+    imx50_jump(handle, header_addr);
+    
+    //fprintf(stderr, "%s\n", "!!! Reading memory");
+    //imx50_read_memory(handle, 0x70800000, data, strlen(payload));
+    //fprintf(stderr, "!!! device status: %X\n", imx50_error_status(handle));
 
     /*
     for(;;){
