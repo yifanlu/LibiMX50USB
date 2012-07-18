@@ -21,28 +21,32 @@
 #include <stdio.h>
 
 #ifndef _WIN32
-    // posix includes
-    #include <stdint.h>
-    #include <stdlib.h>
-    #include <string.h>
-    #include <unistd.h>
-    // function macros
-    #define SLEEP(x) usleep(x * 1000)
-    #define TRACE(msg...) \
-        (fprintf(stderr, msg))
-#else
-    // fixed width integers
-    // unfortunally, VC++ lacks unsigned types
-    typedef __int8 uint8_t;
-    typedef __int16 uint16_t;
-    typedef __int32 uint32_t;
-    typedef __int64 uint64_t;
-    // WinRT includes
-    #include <windows.h>
-    #include <memory.h>
-    // function macros
-    #define SLEEP(x) Sleep(x)
-    #define TRACE printf
+
+// posix includes
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+// function macros
+#define SLEEP(x) usleep(x * 1000)
+#define TRACE(msg...) \
+    (fprintf(stderr, msg))
+
+#else // windows
+
+// fixed width integers
+// unfortunally, VC++ lacks unsigned types
+typedef __int8 uint8_t;
+typedef __int16 uint16_t;
+typedef __int32 uint32_t;
+typedef __int64 uint64_t;
+// WinRT includes
+#include <windows.h>
+#include <memory.h>
+// function macros
+#define SLEEP(x) Sleep(x)
+#define TRACE printf
+
 #endif
 
 int g_imx50_log_mask = ERROR_LOG;
@@ -59,11 +63,11 @@ IMX50USB_EXPORT imx50_device_t *imx50_init_device() {
     hid_device *handle = NULL;
     struct hid_device_info *dev;
     
+    if(IS_LOGGING(DEBUG_LOG)) TRACE("[%s] D:Enumerating devices [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
     while(handle == NULL) {
-        if(IS_LOGGING(DEBUG_LOG)) TRACE("[%s] D:Enumerating devices [%s:%d]\n", __FUNCTION__, __FILE__, __LINE__);
         dev = hid_enumerate(IMX50_VID, IMX50_PID);
         if(dev == NULL) {
-            SLEEP(5);
+            SLEEP(100);
             continue; // loop
         }
         if(IS_LOGGING(DEBUG_LOG)) TRACE("[%s] D:Opening device VID:%04hX PID:%04hx path: %s [%s:%d]\n", 
@@ -644,9 +648,9 @@ IMX50USB_EXPORT int imx50_dcd_write(imx50_device_t *device, dcd_t *buffer, unsig
 **/
 IMX50USB_EXPORT int imx50_jump(imx50_device_t *device, device_addr_t address) {
     sdp_t sdpCmd;
-    unsigned int *status_p;
-    unsigned int status;
-    unsigned int size;
+    //unsigned int *status_p;
+    //unsigned int status;
+    //unsigned int size;
     
     memset(&sdpCmd, 0, sizeof(sdp_t)); // resets the struct 
     sdpCmd.report_number = REPORT_ID_SDP_CMD;
